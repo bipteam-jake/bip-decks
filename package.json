@@ -1,0 +1,31 @@
+{
+  "name": "bip-deck-platform",
+  "version": "0.1.0",
+  "private": true,
+  "description": "BIP Deck Platform — internal deck authoring, review, and distribution",
+  "workspaces": [
+    "apps/*",
+    "packages/*"
+  ],
+  "scripts": {
+    "dev": "npm run dev --workspaces --if-present",
+    "dev:web": "npm run dev --workspace apps/web",
+    "dev:worker": "npm run dev --workspace apps/worker",
+    "build": "npm run build --workspaces --if-present",
+    "lint": "npm run lint --workspaces --if-present",
+    "test": "npm run test --workspaces --if-present",
+    "test:e2e": "npm run test:e2e --workspace apps/web --if-present",
+    "db:migrate": "npm run db:migrate --workspace packages/db",
+    "db:reset": "npm run db:reset --workspace packages/db",
+    "db:studio": "npm run db:studio --workspace packages/db",
+    "db:seed": "npm run db:seed --workspace packages/db --if-present",
+    "db:generate": "npm run db:generate --workspace packages/db"
+  },
+  "devDependencies": {
+    "typescript": "^5.4.5",
+    "prettier": "^3.2.5"
+  },
+  "engines": {
+    "node": ">=20"
+  }
+}

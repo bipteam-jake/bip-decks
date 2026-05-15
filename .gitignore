@@ -54,7 +54,8 @@ playwright/.cache/
 *.db-journal
 
 # Deck repositories — user data, never committed
-deck-repos/
+deck-repos/*
+!deck-repos/.gitkeep
 
 # Docker volumes (if bind-mounted locally)
 postgres-data/

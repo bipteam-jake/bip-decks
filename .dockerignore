@@ -1,0 +1,20 @@
+# .dockerignore — keep build context lean and avoid leaking host artifacts.
+node_modules
+**/node_modules
+.next
+**/.next
+dist
+**/dist
+.git
+.github
+.vscode
+deck-repos
+*.log
+.env
+.env.*
+!.env.example
+docs
+README.md
+coverage
+test-results
+playwright-report

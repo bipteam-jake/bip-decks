@@ -1,0 +1,309 @@
+// BIP Deck Platform — Phase 1 schema.
+// Authoritative reference: docs/bip-deck-platform-data-model.md §3.
+//
+// CHECK constraints from §4.3 are NOT in this file. They land in a follow-up
+// raw SQL migration (comment_exactly_one_author, vote_exactly_one_voter,
+// vote_direction_valid, share_link_snapshot_has_commit).
+
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "postgresql"
+  url      = env("DATABASE_URL")
+}
+
+// ---------------------------------------------------------------------------
+// Identity
+// ---------------------------------------------------------------------------
+
+model User {
+  id           String    @id @default(uuid()) @db.Uuid
+  email        String    @unique
+  name         String
+  passwordHash String?   @map("password_hash")
+  kind         UserKind  @default(TEAM)
+  createdAt    DateTime  @default(now()) @map("created_at")
+  updatedAt    DateTime  @updatedAt @map("updated_at")
+  lastLoginAt  DateTime? @map("last_login_at")
+  deletedAt    DateTime? @map("deleted_at")
+
+  sessions            Session[]
+  decksCreated        Deck[]           @relation("DeckCreator")
+  comments            Comment[]
+  votes               Vote[]
+  shareLinksCreated   ShareLink[]
+  deckVersionsCreated DeckVersion[]
+  aiConversations     AIConversation[]
+  jobsCreated         Job[]
+
+  @@map("users")
+}
+
+enum UserKind {
+  TEAM
+  // CLIENT added in Phase 3
+}
+
+model Session {
+  id         String   @id @default(uuid()) @db.Uuid
+  userId     String   @map("user_id") @db.Uuid
+  tokenHash  String   @unique @map("token_hash")
+  expiresAt  DateTime @map("expires_at")
+  lastUsedAt DateTime @default(now()) @map("last_used_at")
+  userAgent  String?  @map("user_agent")
+  ipAddress  String?  @map("ip_address")
+  createdAt  DateTime @default(now()) @map("created_at")
+
+  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@index([userId])
+  @@index([expiresAt])
+  @@map("sessions")
+}
+
+// ---------------------------------------------------------------------------
+// Content
+// ---------------------------------------------------------------------------
+
+model Deck {
+  id                 String         @id @default(uuid()) @db.Uuid
+  slug               String         @unique
+  title              String
+  lifecycleStage     LifecycleStage @default(DRAFT) @map("lifecycle_stage")
+  repoPath           String         @unique @map("repo_path")
+  headCommitSha      String?        @map("head_commit_sha")
+  createdById        String         @map("created_by_id") @db.Uuid
+  createdAt          DateTime       @default(now()) @map("created_at")
+  updatedAt          DateTime       @updatedAt @map("updated_at")
+  archivedAt         DateTime?      @map("archived_at")
+  deletedAt          DateTime?      @map("deleted_at")
+  editingUserId      String?        @map("editing_user_id") @db.Uuid
+  editingHeartbeatAt DateTime?      @map("editing_heartbeat_at")
+
+  createdBy       User             @relation("DeckCreator", fields: [createdById], references: [id])
+  versions        DeckVersion[]
+  comments        Comment[]
+  shareLinks      ShareLink[]
+  aiConversations AIConversation[]
+  jobs            Job[]
+
+  @@index([createdById])
+  @@index([deletedAt])
+  @@map("decks")
+}
+
+enum LifecycleStage {
+  OUTLINE
+  DRAFT
+  REVIEWING
+  FINAL
+}
+
+model DeckVersion {
+  id          String   @id @default(uuid()) @db.Uuid
+  deckId      String   @map("deck_id") @db.Uuid
+  commitSha   String   @map("commit_sha")
+  tagName     String   @map("tag_name")
+  notes       String?
+  createdById String   @map("created_by_id") @db.Uuid
+  createdAt   DateTime @default(now()) @map("created_at")
+
+  deck      Deck @relation(fields: [deckId], references: [id], onDelete: Cascade)
+  createdBy User @relation(fields: [createdById], references: [id])
+
+  @@unique([deckId, tagName])
+  @@index([deckId])
+  @@map("deck_versions")
+}
+
+model Comment {
+  id                String        @id @default(uuid()) @db.Uuid
+  deckId            String        @map("deck_id") @db.Uuid
+  slideId           String        @map("slide_id")
+  elementAnchor     Json?         @map("element_anchor")
+  authorUserId      String?       @map("author_user_id") @db.Uuid
+  authorRecipientId String?       @map("author_recipient_id") @db.Uuid
+  authorDisplayName String        @map("author_display_name")
+  body              String
+  parentId          String?       @map("parent_id") @db.Uuid
+  status            CommentStatus @default(OPEN)
+  adminNote         String?       @map("admin_note")
+  createdAt         DateTime      @default(now()) @map("created_at")
+  updatedAt         DateTime      @updatedAt @map("updated_at")
+
+  deck            Deck                @relation(fields: [deckId], references: [id], onDelete: Cascade)
+  authorUser      User?               @relation(fields: [authorUserId], references: [id])
+  authorRecipient ShareLinkRecipient? @relation(fields: [authorRecipientId], references: [id])
+  parent          Comment?            @relation("CommentReplies", fields: [parentId], references: [id], onDelete: Cascade)
+  replies         Comment[]           @relation("CommentReplies")
+  votes           Vote[]
+
+  @@index([deckId, slideId])
+  @@index([deckId, status])
+  @@index([parentId])
+  @@map("comments")
+}
+
+enum CommentStatus {
+  OPEN
+  IN_REVIEW
+  PLANNED
+  DONE
+  DISMISSED
+}
+
+model Vote {
+  id          String   @id @default(uuid()) @db.Uuid
+  commentId   String   @map("comment_id") @db.Uuid
+  userId      String?  @map("user_id") @db.Uuid
+  recipientId String?  @map("recipient_id") @db.Uuid
+  direction   Int
+  createdAt   DateTime @default(now()) @map("created_at")
+
+  comment   Comment             @relation(fields: [commentId], references: [id], onDelete: Cascade)
+  user      User?               @relation(fields: [userId], references: [id])
+  recipient ShareLinkRecipient? @relation(fields: [recipientId], references: [id])
+
+  @@unique([commentId, userId])
+  @@unique([commentId, recipientId])
+  @@index([commentId])
+  @@map("votes")
+}
+
+// ---------------------------------------------------------------------------
+// Workflow
+// ---------------------------------------------------------------------------
+
+model ShareLink {
+  id                String         @id @default(uuid()) @db.Uuid
+  deckId            String         @map("deck_id") @db.Uuid
+  token             String         @unique
+  audienceType      AudienceType   @map("audience_type")
+  versionBinding    VersionBinding @default(LIVE) @map("version_binding")
+  boundCommitSha    String?        @map("bound_commit_sha")
+  createdById       String         @map("created_by_id") @db.Uuid
+  createdAt         DateTime       @default(now()) @map("created_at")
+  expiresAt         DateTime?      @map("expires_at")
+  revokedAt         DateTime?      @map("revoked_at")
+  lastUsedAt        DateTime?      @map("last_used_at")
+  downloadsDisabled Boolean        @default(false) @map("downloads_disabled")
+
+  deck       Deck                 @relation(fields: [deckId], references: [id], onDelete: Cascade)
+  createdBy  User                 @relation(fields: [createdById], references: [id])
+  recipients ShareLinkRecipient[]
+
+  @@index([deckId])
+  @@map("share_links")
+}
+
+enum AudienceType {
+  REVIEWER
+  // COLLABORATOR added in Phase 3 (client portal access)
+  // PUBLIC_VIEWER, EMAIL_GATED_VIEWER, CODED_VIEWER added in Phase 3
+}
+
+enum VersionBinding {
+  LIVE
+  SNAPSHOT
+}
+
+model ShareLinkRecipient {
+  id             String   @id @default(uuid()) @db.Uuid
+  shareLinkId    String   @map("share_link_id") @db.Uuid
+  email          String?
+  displayName    String   @map("display_name")
+  clientId       String   @unique @map("client_id") @db.Uuid
+  firstVisitedAt DateTime @default(now()) @map("first_visited_at")
+  lastVisitedAt  DateTime @default(now()) @map("last_visited_at")
+  visitCount     Int      @default(1) @map("visit_count")
+
+  shareLink ShareLink @relation(fields: [shareLinkId], references: [id], onDelete: Cascade)
+  comments  Comment[]
+  votes     Vote[]
+
+  @@index([shareLinkId])
+  @@map("share_link_recipients")
+}
+
+model Job {
+  id            String    @id @default(uuid()) @db.Uuid
+  deckId        String?   @map("deck_id") @db.Uuid
+  kind          JobKind
+  status        JobStatus @default(QUEUED)
+  createdById   String    @map("created_by_id") @db.Uuid
+  label         String?
+  input         Json
+  output        Json?
+  error         String?
+  workingBranch String?   @map("working_branch")
+  startedAt     DateTime? @map("started_at")
+  completedAt   DateTime? @map("completed_at")
+  createdAt     DateTime  @default(now()) @map("created_at")
+  updatedAt     DateTime  @updatedAt @map("updated_at")
+
+  deck      Deck?       @relation(fields: [deckId], references: [id], onDelete: SetNull)
+  createdBy User        @relation(fields: [createdById], references: [id])
+  messages  AIMessage[]
+
+  @@index([deckId])
+  @@index([status])
+  @@map("jobs")
+}
+
+enum JobKind {
+  AI_EDIT
+  // OUTLINE_GENERATION, BRAND_EXTRACTION added in Phase 2
+  // TRIAGE_SLIDE, TRIAGE_ROLLUP, AGENTIC_EDIT, PDF_EXPORT added in Phase 3
+}
+
+enum JobStatus {
+  QUEUED
+  RUNNING
+  AWAITING_REVIEW
+  DONE
+  FAILED
+  CANCELED
+}
+
+model AIConversation {
+  id          String   @id @default(uuid()) @db.Uuid
+  deckId      String   @map("deck_id") @db.Uuid
+  createdById String   @map("created_by_id") @db.Uuid
+  title       String?
+  createdAt   DateTime @default(now()) @map("created_at")
+  updatedAt   DateTime @updatedAt @map("updated_at")
+
+  deck      Deck        @relation(fields: [deckId], references: [id], onDelete: Cascade)
+  createdBy User        @relation(fields: [createdById], references: [id])
+  messages  AIMessage[]
+
+  @@index([deckId])
+  @@map("ai_conversations")
+}
+
+model AIMessage {
+  id             String      @id @default(uuid()) @db.Uuid
+  conversationId String      @map("conversation_id") @db.Uuid
+  role           MessageRole
+  content        Json
+  model          String?
+  tokensIn       Int?        @map("tokens_in")
+  tokensOut      Int?        @map("tokens_out")
+  costCents      Int?        @map("cost_cents")
+  relatedJobId   String?     @map("related_job_id") @db.Uuid
+  createdAt      DateTime    @default(now()) @map("created_at")
+
+  conversation AIConversation @relation(fields: [conversationId], references: [id], onDelete: Cascade)
+  relatedJob   Job?           @relation(fields: [relatedJobId], references: [id], onDelete: SetNull)
+
+  @@index([conversationId])
+  @@map("ai_messages")
+}
+
+enum MessageRole {
+  USER
+  ASSISTANT
+  SYSTEM
+}

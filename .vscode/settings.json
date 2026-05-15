@@ -24,5 +24,6 @@
     {
       "file": ".github/copilot-instructions.md"
     }
-  ]
+  ],
+  "prisma.pinToPrisma6": true
 }

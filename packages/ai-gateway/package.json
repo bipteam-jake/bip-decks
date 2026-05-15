@@ -1,0 +1,17 @@
+{
+  "name": "@bip/ai-gateway",
+  "version": "0.1.0",
+  "private": true,
+  "description": "Internal AI provider abstraction. Anthropic-only in Phase 1.",
+  "main": "./src/index.ts",
+  "types": "./src/index.ts",
+  "exports": {
+    ".": "./src/index.ts"
+  },
+  "scripts": {
+    "typecheck": "tsc --noEmit"
+  },
+  "devDependencies": {
+    "typescript": "^5.4.5"
+  }
+}
