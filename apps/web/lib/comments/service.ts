@@ -1,9 +1,13 @@
-// Slide-level comments service.
+// Slide-level + element-level comments service.
 //
-// Phase 1: per docs/bip-deck-platform-architecture.md §11 and §3 of
-// docs/bip-deck-platform-data-model.md. Element-level anchoring (the
-// `elementAnchor` column) is intentionally ignored here; it lands in
-// Phase 2 (phasing doc §2).
+// Phase 1 shipped slide-level only (per docs/bip-deck-platform-architecture.md
+// §11 and §3 of docs/bip-deck-platform-data-model.md).
+// Phase 2.3 (docs/bip-deck-platform-phasing.md §3 item 1) adds optional
+// `elementAnchor` so a comment can pin to a point inside the slide. The
+// anchor is a small JSON document with normalized 0..1 coordinates relative
+// to the slide's bounding rect (so the pin survives any CSS scale transform
+// the runtime applies) plus an optional best-effort CSS selector to the
+// clicked element for future re-anchoring after AI edits.
 //
 // Identity model. Every comment and vote belongs to either a team `User` or
 // a `ShareLinkRecipient` (magic-link visitor). Schema-level XOR is enforced
@@ -11,10 +15,41 @@
 // constraints; this layer enforces it before hitting the DB so we surface a
 // proper ValidationError instead of a 500.
 
+import { z } from 'zod';
+
 import { prisma } from '@/lib/prisma';
 import { ForbiddenError, NotFoundError, ValidationError } from '@/lib/errors';
 import type { CommentViewer } from '@/lib/comments/viewer';
-import type { Comment, CommentStatus, Vote } from '@bip/db';
+import { Prisma, type Comment, type CommentStatus, type Vote } from '@bip/db';
+
+// ---------------------------------------------------------------------------
+// Element anchor (Phase 2.3)
+// ---------------------------------------------------------------------------
+
+/**
+ * Pin coordinates for an element-anchored comment.
+ *
+ * Coordinates are normalized to the **slide's** bounding rect, not the
+ * viewport, so a pin placed at the center of the slide stays at the center
+ * regardless of the runtime's CSS scale transform or container size.
+ *
+ * `selector` is a best-effort CSS path captured at pin time. It's used to
+ * re-anchor the pin if the slide HTML is later edited (e.g. an AI rewrite
+ * adds a new section above the pinned element). When the selector resolves,
+ * the overlay re-derives x/y from the resolved element's rect; when it
+ * doesn't, it falls back to the stored x/y.
+ *
+ * `elementText` is the first ~60 chars of text content at pin time, purely
+ * for display ("pinned on: Hero headline").
+ */
+export const ElementAnchorSchema = z.object({
+  x: z.number().min(0).max(1),
+  y: z.number().min(0).max(1),
+  selector: z.string().max(500).optional(),
+  elementText: z.string().max(120).optional(),
+});
+
+export type ElementAnchor = z.infer<typeof ElementAnchorSchema>;
 
 // ---------------------------------------------------------------------------
 // Types returned to the client
@@ -120,6 +155,11 @@ export interface CreateCommentInput {
   body: string;
   /** Optional: when set, this comment is a reply to that comment. */
   parentId?: string;
+  /**
+   * Optional element pin. Top-level comments only — replies inherit their
+   * parent's anchor implicitly. See ElementAnchorSchema for shape.
+   */
+  elementAnchor?: ElementAnchor | null;
   viewer: CommentViewer;
 }
 
@@ -136,6 +176,19 @@ export async function createComment(input: CreateCommentInput): Promise<Comment>
   if (!body) throw new ValidationError('Comment body is required');
   if (body.length > 5000) throw new ValidationError('Comment body too long (max 5000 chars)');
   if (!input.slideId) throw new ValidationError('slideId is required');
+
+  // Reject anchors on replies: replies inherit their parent's pin in the UI.
+  // Surfacing this as a 400 (rather than silently dropping) lets callers
+  // know they have a UX bug to fix.
+  if (input.parentId && input.elementAnchor) {
+    throw new ValidationError('Replies cannot have their own elementAnchor');
+  }
+  if (input.elementAnchor) {
+    const parsed = ElementAnchorSchema.safeParse(input.elementAnchor);
+    if (!parsed.success) {
+      throw new ValidationError('Invalid elementAnchor', parsed.error.flatten());
+    }
+  }
 
   const deck = await prisma.deck.findFirst({
     where: { id: input.deckId, deletedAt: null },
@@ -169,6 +222,13 @@ export async function createComment(input: CreateCommentInput): Promise<Comment>
       body,
       parentId: input.parentId ?? null,
       authorDisplayName: input.viewer.displayName,
+      // Persist the element anchor only on top-level comments. Replies
+      // visually attach to the parent's pin in the overlay UI, so storing a
+      // separate anchor on each reply would just be drift waiting to happen.
+      elementAnchor:
+        input.elementAnchor && !input.parentId
+          ? (input.elementAnchor as unknown as Prisma.InputJsonValue)
+          : Prisma.JsonNull,
       ...authorFields,
     },
   });

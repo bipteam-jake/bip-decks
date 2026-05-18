@@ -14,7 +14,7 @@ import { z } from 'zod';
 import { errorResponse } from '@/lib/api/responses';
 import { UnauthorizedError, ValidationError } from '@/lib/errors';
 import { getCommentViewer } from '@/lib/comments/viewer';
-import { createComment, listComments } from '@/lib/comments/service';
+import { createComment, ElementAnchorSchema, listComments } from '@/lib/comments/service';
 
 export const runtime = 'nodejs';
 export const dynamic = 'force-dynamic';
@@ -38,6 +38,8 @@ const createSchema = z.object({
   slideId: z.string().min(1).max(200),
   body: z.string().min(1).max(5000),
   parentId: z.string().uuid().optional(),
+  /** Phase 2.3 (docs/bip-deck-platform-phasing.md §3 item 1): optional pin. */
+  elementAnchor: ElementAnchorSchema.optional(),
 });
 
 export async function POST(req: NextRequest, { params }: Ctx): Promise<NextResponse> {
@@ -52,6 +54,7 @@ export async function POST(req: NextRequest, { params }: Ctx): Promise<NextRespo
       slideId: parsed.data.slideId,
       body: parsed.data.body,
       parentId: parsed.data.parentId,
+      elementAnchor: parsed.data.elementAnchor ?? null,
       viewer,
     });
     return NextResponse.json({ comment }, { status: 201 });

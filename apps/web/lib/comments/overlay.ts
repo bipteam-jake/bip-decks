@@ -7,13 +7,16 @@
 // (deck, commit); identity-dependent chrome is layered on at response time
 // by `app/d/[slug]/route.ts` — keep that out of the cache.
 //
-// Phase 1 scope (docs/bip-deck-platform-phasing.md §1, "Slide-level
-// comments: port the comment overlay from the existing tool"):
+// Phase 1 + 2.3 scope (docs/bip-deck-platform-phasing.md §1 + §3):
 //   - One floating panel docked to the right edge of the runtime.
 //   - Tracks current slide via IntersectionObserver on `<section.slide>`.
 //   - List + create + reply + vote + (team-only) status update.
-//   - No element-level pins (Phase 2), no @mentions (Phase 2),
-//     no continuous mini-triage (Phase 4).
+//   - Phase 2.3: element-level pins. A "Pin" toggle puts the runtime in
+//     pin-placement mode; clicking inside the current slide drops a pin
+//     and opens a composer pre-bound to that anchor. Existing pinned
+//     comments render as numbered dots overlaid on the current slide;
+//     clicking a dot opens the panel scrolled to the comment.
+//   - No @mentions (Phase 2.4), no continuous mini-triage (Phase 4).
 //
 // Vanilla JS on purpose: the runtime bundle is plain HTML with no bundler,
 // so dropping a React app in would need its own build step. The script is
@@ -141,6 +144,41 @@ const OVERLAY_CSS = `
 .bip-c-submit:disabled { background: #93c5fd; cursor: not-allowed; }
 .bip-c-composer { padding: 12px 14px; border-top: 1px solid #e5e7eb; background: #f9fafb; }
 .bip-c-err { color: #b91c1c; font-size: 11px; margin-top: 4px; }
+
+/* ---- Element pins (Phase 2.3) -------------------------------------- */
+.bip-c-pin-toggle {
+  position: fixed; top: 12px; right: 96px; z-index: 2147483646;
+  background: #fff; color: #1f2937; border: 1px solid #d1d5db;
+  border-radius: 9999px; padding: 6px 12px; font-size: 12px; font-weight: 600;
+  cursor: pointer; box-shadow: 0 2px 8px rgba(0,0,0,0.08);
+}
+.bip-c-pin-toggle:hover { background: #f3f4f6; }
+.bip-c-pin-toggle.bip-on { background: #2563eb; color: #fff; border-color: #1d4ed8; }
+/* Pin-placement mode: crosshair cursor + faint outline so users know
+   the slide is now click-to-pin. */
+.bip-pinning .slide { cursor: crosshair; outline: 2px dashed rgba(37, 99, 235, 0.35); outline-offset: -2px; }
+.bip-c-pin-layer {
+  position: absolute; inset: 0; pointer-events: none; z-index: 100;
+}
+.bip-c-pin {
+  position: absolute; transform: translate(-50%, -50%); pointer-events: auto;
+  width: 22px; height: 22px; border-radius: 9999px;
+  background: #2563eb; color: #fff; font-size: 11px; font-weight: 700;
+  display: flex; align-items: center; justify-content: center; cursor: pointer;
+  border: 2px solid #fff; box-shadow: 0 1px 4px rgba(0,0,0,0.25);
+  font-family: inherit;
+}
+.bip-c-pin:hover { background: #1d4ed8; }
+.bip-c-pin.bip-pin-DONE { background: #16a34a; }
+.bip-c-pin.bip-pin-DISMISSED { background: #9ca3af; }
+.bip-c-pin.bip-pin-highlight { box-shadow: 0 0 0 4px rgba(37, 99, 235, 0.35), 0 1px 4px rgba(0,0,0,0.25); }
+.bip-c-anchor-badge {
+  display: inline-flex; align-items: center; gap: 4px;
+  background: #dbeafe; color: #1e40af; border-radius: 4px;
+  padding: 1px 6px; font-size: 10px; font-weight: 600; cursor: pointer;
+}
+.bip-c-anchor-badge:hover { background: #bfdbfe; }
+.bip-c-comment.bip-highlight { box-shadow: 0 0 0 2px #2563eb; }
 `;
 
 // ---------------------------------------------------------------------------
@@ -156,6 +194,9 @@ var STATUSES = ['OPEN','IN_REVIEW','PLANNED','DONE','DISMISSED'];
 var root = document.getElementById('bip-comments-root');
 var currentSlideId = null;
 var comments = []; // tree of CommentNode for current slide
+var pinMode = false; // Phase 2.3: click-to-pin placement mode
+var pendingAnchor = null; // anchor captured by last pin click, waiting for body
+var highlightId = null;  // comment id to highlight on next render (after pin click)
 
 // ---- DOM helpers ----------------------------------------------------------
 function el(tag, opts, children) {
@@ -204,6 +245,7 @@ function loadComments() {
 
 // ---- Layout ---------------------------------------------------------------
 var toggleBtn = el('button', { className: 'bip-c-toggle', text: 'Comments' });
+var pinToggle = el('button', { className: 'bip-c-pin-toggle', text: '\u{1F4CC} Pin' });
 var panel = el('div', { className: 'bip-c-panel' });
 var headerTitle = el('div', { className: 'bip-c-title', text: 'Comments' });
 var headerSub = el('div', { className: 'bip-c-sub', text: '' });
@@ -228,9 +270,11 @@ panel.appendChild(header);
 panel.appendChild(list);
 panel.appendChild(composer);
 root.appendChild(toggleBtn);
+root.appendChild(pinToggle);
 root.appendChild(panel);
 
 toggleBtn.addEventListener('click', function() { setOpen(true); });
+pinToggle.addEventListener('click', function() { setPinMode(!pinMode); });
 
 function setOpen(open) {
   if (open) {
@@ -246,6 +290,158 @@ function setOpen(open) {
 function showError(msg) {
   errBox.textContent = msg || '';
   if (msg) setTimeout(function() { if (errBox.textContent === msg) errBox.textContent = ''; }, 4000);
+}
+
+// ---- Pin mode (Phase 2.3) -------------------------------------------------
+// Toggle drives a body class so any slide gets the crosshair cursor; the
+// click handler is wired once at boot via capture so it fires regardless of
+// what's underneath (the runtime's own click handlers don't get a turn).
+function setPinMode(on) {
+  pinMode = !!on;
+  if (pinMode) {
+    document.body.classList.add('bip-pinning');
+    pinToggle.classList.add('bip-on');
+    pinToggle.textContent = '\u{1F4CC} Click slide\u2026';
+  } else {
+    document.body.classList.remove('bip-pinning');
+    pinToggle.classList.remove('bip-on');
+    pinToggle.textContent = '\u{1F4CC} Pin';
+  }
+}
+
+/**
+ * Build a best-effort CSS selector to the given node, scoped to its
+ * enclosing .slide element. Walks up the tree using id when available,
+ * else nth-of-type. Capped at 8 segments to keep stored selectors short
+ * and resilient to minor markup shifts.
+ */
+function buildSelector(node, slideRoot) {
+  if (!node || node === slideRoot) return '';
+  var parts = [];
+  var cur = node;
+  var depth = 0;
+  while (cur && cur !== slideRoot && cur.nodeType === 1 && depth < 8) {
+    var seg = cur.tagName.toLowerCase();
+    if (cur.id) { seg = '#' + cur.id; parts.unshift(seg); break; }
+    var parent = cur.parentNode;
+    if (parent) {
+      var sibs = parent.children || [];
+      var idx = 1, same = 0;
+      for (var i = 0; i < sibs.length; i++) {
+        if (sibs[i].tagName === cur.tagName) {
+          if (sibs[i] === cur) idx = same + 1;
+          same++;
+        }
+      }
+      if (same > 1) seg += ':nth-of-type(' + idx + ')';
+    }
+    parts.unshift(seg);
+    cur = parent;
+    depth++;
+  }
+  return parts.join(' > ');
+}
+
+function handleSlideClick(ev) {
+  if (!pinMode) return;
+  // Only react to clicks on/inside a slide element.
+  var slide = ev.target && ev.target.closest ? ev.target.closest('.slide[data-slide-id]') : null;
+  if (!slide) return;
+  ev.preventDefault();
+  ev.stopPropagation();
+  var rect = slide.getBoundingClientRect();
+  if (rect.width <= 0 || rect.height <= 0) return;
+  var x = (ev.clientX - rect.left) / rect.width;
+  var y = (ev.clientY - rect.top) / rect.height;
+  if (x < 0 || x > 1 || y < 0 || y > 1) return;
+  var selector = buildSelector(ev.target, slide);
+  var elText = (ev.target && ev.target.textContent ? ev.target.textContent : '').trim().slice(0, 60);
+  pendingAnchor = { x: x, y: y };
+  if (selector) pendingAnchor.selector = selector;
+  if (elText) pendingAnchor.elementText = elText;
+  // Make sure we're on the slide the user clicked.
+  var clickedSid = slide.getAttribute('data-slide-id');
+  if (clickedSid && clickedSid !== currentSlideId) {
+    currentSlideId = clickedSid;
+    var title = slide.getAttribute('data-slide-title') || clickedSid;
+    headerSub.textContent = 'Slide: ' + title;
+  }
+  setPinMode(false);
+  // Open panel + focus the composer so the user can type immediately.
+  setOpen(true);
+  composerInput.placeholder = 'Pin: ' + (elText || ('(' + Math.round(x*100) + '%, ' + Math.round(y*100) + '%)'));
+  try { composerInput.focus(); } catch(e) {}
+}
+
+// ---- Pin layer ------------------------------------------------------------
+// One absolute-positioned overlay inside each slide. Repositioned on resize
+// because the slide's rect (and therefore the relative pin offsets) only
+// changes with layout — no need to redraw on scroll.
+function pinLayerFor(slide) {
+  var layer = slide.querySelector(':scope > .bip-c-pin-layer');
+  if (!layer) {
+    // Slide may be position:static; make it positioned so the layer anchors.
+    var cs = window.getComputedStyle(slide);
+    if (cs && cs.position === 'static') slide.style.position = 'relative';
+    layer = document.createElement('div');
+    layer.className = 'bip-c-pin-layer';
+    slide.appendChild(layer);
+  }
+  return layer;
+}
+
+function renderPinsForCurrentSlide() {
+  // Clear pin layers on all slides first (current slide's pins are
+  // re-rendered below). Cheaper than tracking what changed.
+  var allLayers = document.querySelectorAll('.bip-c-pin-layer');
+  for (var i = 0; i < allLayers.length; i++) clear(allLayers[i]);
+  if (!currentSlideId) return;
+  var slide = document.querySelector('.slide[data-slide-id="' + cssEscape(currentSlideId) + '"]');
+  if (!slide) return;
+  var layer = pinLayerFor(slide);
+  var number = 0;
+  for (var j = 0; j < comments.length; j++) {
+    var n = comments[j];
+    var a = n.comment.elementAnchor;
+    if (!a || typeof a.x !== 'number' || typeof a.y !== 'number') continue;
+    number++;
+    (function(commentId, status, num, ax, ay) {
+      var dot = el('button', {
+        className: 'bip-c-pin bip-pin-' + status + (commentId === highlightId ? ' bip-pin-highlight' : ''),
+        text: String(num),
+        attrs: { type: 'button', title: 'Comment #' + num },
+        style: { left: (ax * 100) + '%', top: (ay * 100) + '%' },
+        on: { click: function(ev) {
+          ev.preventDefault(); ev.stopPropagation();
+          highlightComment(commentId);
+        } },
+      });
+      layer.appendChild(dot);
+    })(n.comment.id, n.comment.status, number, a.x, a.y);
+  }
+}
+
+function highlightComment(commentId) {
+  highlightId = commentId;
+  setOpen(true);
+  // Re-render to apply highlight class, then scroll the comment into view.
+  render();
+  setTimeout(function() {
+    var node = list.querySelector('[data-comment-id="' + cssEscape(commentId) + '"]');
+    if (node && node.scrollIntoView) node.scrollIntoView({ behavior: 'smooth', block: 'center' });
+    // Auto-clear highlight after a few seconds.
+    setTimeout(function() {
+      if (highlightId === commentId) { highlightId = null; render(); }
+    }, 2500);
+  }, 0);
+}
+
+// Tiny CSS.escape polyfill — slide ids are author-defined strings, so we
+// can't trust them in selectors without escaping. Modern browsers have
+// CSS.escape; this falls back to a conservative manual escape.
+function cssEscape(s) {
+  if (window.CSS && CSS.escape) return CSS.escape(s);
+  return String(s).replace(/[^a-zA-Z0-9_-]/g, function(c) { return '\\\\' + c; });
 }
 
 // ---- Slide tracking -------------------------------------------------------
@@ -268,12 +464,17 @@ function trackSlides() {
         currentSlideId = sid;
         var title = best.getAttribute('data-slide-title') || sid;
         headerSub.textContent = 'Slide: ' + title;
-        if (panel.classList.contains('bip-open')) loadComments();
+        // Always reload so pins on the new slide can render (panel may be
+        // closed but pins are visible regardless).
+        loadComments();
       }
     }
   }, { threshold: [0, 0.25, 0.5, 0.75, 1] });
   for (var i = 0; i < slides.length; i++) io.observe(slides[i]);
   // Seed
+  // Load comments once so pins on the first slide render before the user
+  // opens the panel (Phase 2.3).
+  loadComments();
   currentSlideId = slides[0].getAttribute('data-slide-id');
   headerSub.textContent = 'Slide: ' + (slides[0].getAttribute('data-slide-title') || currentSlideId);
 }
@@ -283,14 +484,20 @@ function render() {
   clear(list);
   if (!comments.length) {
     list.appendChild(el('div', { className: 'bip-c-empty', text: 'No comments on this slide yet.' }));
+    renderPinsForCurrentSlide();
     return;
   }
-  for (var i = 0; i < comments.length; i++) list.appendChild(renderNode(comments[i], false));
+  for (var i = 0; i < comments.length; i++) list.appendChild(renderNode(comments[i], false, i + 1));
+  renderPinsForCurrentSlide();
 }
 
-function renderNode(node, isReply) {
+function renderNode(node, isReply, pinNumber) {
   var c = node.comment;
-  var wrap = el('div', { className: 'bip-c-comment' + (isReply ? ' bip-reply' : '') });
+  var hi = (c.id === highlightId) ? ' bip-highlight' : '';
+  var wrap = el('div', {
+    className: 'bip-c-comment' + (isReply ? ' bip-reply' : '') + hi,
+    attrs: { 'data-comment-id': c.id },
+  });
 
   // Meta row
   var meta = el('div', { className: 'bip-c-meta' });
@@ -301,6 +508,16 @@ function renderNode(node, isReply) {
       className: 'bip-c-status bip-c-status-' + c.status,
       text: c.status.replace('_', ' ').toLowerCase(),
     }));
+    // Pin badge (Phase 2.3). Click flashes the pin on the slide.
+    if (c.elementAnchor && typeof c.elementAnchor.x === 'number') {
+      var commentId = c.id;
+      meta.appendChild(el('span', {
+        className: 'bip-c-anchor-badge',
+        text: '\u{1F4CC} #' + pinNumber,
+        attrs: { title: c.elementAnchor.elementText || 'pinned to element' },
+        on: { click: function() { highlightComment(commentId); } },
+      }));
+    }
   }
   wrap.appendChild(meta);
 
@@ -391,12 +608,23 @@ function submitComment(textArea, parentId, btn) {
   var body = (textArea.value || '').trim();
   if (!body) return;
   if (!currentSlideId) { showError('No active slide'); return; }
+  // Use pending pin only when this is a top-level comment from the main
+  // composer (replies inherit their parent's pin in the UI, and we reject
+  // anchored replies server-side).
+  var anchor = (!parentId && textArea === composerInput) ? pendingAnchor : null;
   btn.disabled = true;
+  var payload = { slideId: currentSlideId, body: body };
+  if (parentId) payload.parentId = parentId;
+  if (anchor) payload.elementAnchor = anchor;
   api('/api/decks/' + encodeURIComponent(DECK_ID) + '/comments', {
     method: 'POST',
-    body: { slideId: currentSlideId, body: body, parentId: parentId || undefined },
+    body: payload,
   }).then(function() {
     textArea.value = '';
+    if (anchor) {
+      pendingAnchor = null;
+      composerInput.placeholder = 'Add a comment\u2026';
+    }
     loadComments();
   }).catch(function(err) {
     showError(err.message);
@@ -406,9 +634,25 @@ function submitComment(textArea, parentId, btn) {
 }
 
 // ---- Boot -----------------------------------------------------------------
-if (document.readyState === 'loading') {
-  document.addEventListener('DOMContentLoaded', trackSlides);
-} else {
+function boot() {
   trackSlides();
+  // Capture-phase so we win over any click handler the deck JS attaches.
+  document.addEventListener('click', handleSlideClick, true);
+  // Escape exits pin mode without placing.
+  document.addEventListener('keydown', function(ev) {
+    if (ev.key === 'Escape' && pinMode) setPinMode(false);
+  });
+  // Re-render pin positions when layout changes (the slide's bounding rect
+  // can shift on viewport resize). Throttle via rAF.
+  var raf = 0;
+  window.addEventListener('resize', function() {
+    if (raf) return;
+    raf = requestAnimationFrame(function() { raf = 0; renderPinsForCurrentSlide(); });
+  });
+}
+if (document.readyState === 'loading') {
+  document.addEventListener('DOMContentLoaded', boot);
+} else {
+  boot();
 }
 `;

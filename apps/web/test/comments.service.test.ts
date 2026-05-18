@@ -128,6 +128,67 @@ describe('createComment', () => {
       }),
     ).rejects.toBeInstanceOf(NotFoundError);
   });
+
+  // ---- Phase 2.3: element-level anchors ----------------------------------
+
+  it('persists an elementAnchor on a top-level comment', async () => {
+    const user = await makeUser();
+    const deck = await makeDeck(user);
+    const c = await createComment({
+      deckId: deck.id,
+      slideId: SLIDE_A,
+      body: 'pinned',
+      elementAnchor: {
+        x: 0.42,
+        y: 0.17,
+        selector: 'section > h1',
+        elementText: 'Hero headline',
+      },
+      viewer: teamViewer(user),
+    });
+    expect(c.elementAnchor).toMatchObject({
+      x: 0.42,
+      y: 0.17,
+      selector: 'section > h1',
+      elementText: 'Hero headline',
+    });
+  });
+
+  it('rejects elementAnchor with x out of [0, 1]', async () => {
+    const user = await makeUser();
+    const deck = await makeDeck(user);
+    await expect(
+      createComment({
+        deckId: deck.id,
+        slideId: SLIDE_A,
+        body: 'bad pin',
+        elementAnchor: { x: 1.5, y: 0.5 },
+        viewer: teamViewer(user),
+      }),
+    ).rejects.toBeInstanceOf(ValidationError);
+  });
+
+  it('rejects elementAnchor on a reply (replies inherit parent pin)', async () => {
+    const user = await makeUser();
+    const deck = await makeDeck(user);
+    const parent = await createComment({
+      deckId: deck.id,
+      slideId: SLIDE_A,
+      body: 'parent',
+      elementAnchor: { x: 0.1, y: 0.1 },
+      viewer: teamViewer(user),
+    });
+    await expect(
+      createComment({
+        deckId: deck.id,
+        slideId: SLIDE_A,
+        body: 'reply',
+        parentId: parent.id,
+        elementAnchor: { x: 0.2, y: 0.2 },
+        viewer: teamViewer(user),
+      }),
+    ).rejects.toBeInstanceOf(ValidationError);
+  });
 });
 
 describe('listComments', () => {
