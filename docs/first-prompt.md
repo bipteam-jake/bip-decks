@@ -83,6 +83,7 @@ faithfulness to the docs matter more than speed.
 Once the foundation is up and the Prisma schema matches the doc, the natural next prompts in order:
 
 - "Implement the auth system per the architecture doc §6 and data model §3.1/3.2. Email + password, argon2, 90-day rolling sessions in HTTP-only cookies. Include a signup endpoint, login endpoint, logout endpoint, session middleware, and a seed script that creates an admin user. Tests for the happy path and the obvious failure modes."
+## stoped here 5.15 - start next prompt
 
 - "Implement deck CRUD per the architecture doc §3 and §7. Create-from-blank, rename, list, get, archive, soft-delete. Each create initializes a git repo in deck-repos/ with a starter deck.json and one empty slide. No UI yet — just the API and the service module."
 
