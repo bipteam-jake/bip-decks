@@ -10,7 +10,7 @@
 
 Companion to `bip-deck-platform-architecture.md` and `bip-deck-platform-phasing.md`. Defines the concrete Postgres schema for Phase 1 as Prisma models. Hand this to Copilot when scaffolding the database layer.
 
-Phase 2+ entities (brand kits, view events, viewer sessions, mention join tables) are sketched in §5 but not detailed here — they'll get their own additions when those phases approach. Phase 1 ships with the nine tables in §3, and the schema is designed so Phase 2/3 extensions are additive, not migrations of existing data.
+Phase 2+ entities (brand kits, view events, viewer sessions, mention join tables) are sketched in §5 but not detailed here — they'll get their own additions when those phases approach. Phase 1 ships with the eleven tables in §3, and the schema is designed so Phase 2/3 extensions are additive, not migrations of existing data.
 
 ---
 
@@ -29,7 +29,7 @@ Phase 2+ entities (brand kits, view events, viewer sessions, mention join tables
 
 ## 2. Entity overview
 
-Phase 1 has ten tables in three groups:
+Phase 1 has eleven tables in three groups:
 
 - **Identity** — `User`, `Session`, `ShareLinkRecipient`
 - **Content** — `Deck`, `DeckVersion`, `Comment`, `Vote`
@@ -105,6 +105,7 @@ enum UserKind {
 ```
 
 **Notes**
+
 - `passwordHash` is nullable for forward compatibility. Phase 4 SSO users will have null hash.
 - `kind` defaults to TEAM and Phase 3 adds CLIENT — no migration impact on existing rows.
 - Soft delete supported but rarely used for team users; deactivation (setting a flag) is the typical flow.
@@ -133,6 +134,7 @@ model Session {
 ```
 
 **Notes**
+
 - Token hashed server-side with HMAC-SHA256 using a secret from environment.
 - A cron job prunes expired sessions weekly.
 - `ipAddress` and `userAgent` are recorded for audit only; never used for binding (would break legitimate roaming).
@@ -178,6 +180,7 @@ enum LifecycleStage {
 ```
 
 **Notes**
+
 - `slug` is the human-readable URL segment (`acme-series-a`). Unique across all decks including soft-deleted ones to prevent slug recycling collisions.
 - `repoPath` is the filesystem path of the deck's git repo. Application enforces uniqueness; the DB constraint is a safety net.
 - `headCommitSha` is a denormalized pointer to the main-branch tip. Updated on each commit. The git repo on disk is the authoritative source; this column is a cache for fast reads.
@@ -209,6 +212,7 @@ model DeckVersion {
 ```
 
 **Notes**
+
 - Each row points to a git tag of the same name in the deck's repo.
 - `tagName` unique within a deck (`final-v1`, `final-v2`). Auto-generated on FINAL transition; editable.
 - Snapshot share links (Phase 3) reference a `commit_sha` directly, not a `DeckVersion` row, so versions can be deleted without breaking links.
@@ -256,6 +260,7 @@ enum CommentStatus {
 ```
 
 **Notes**
+
 - `authorUserId` XOR `authorRecipientId` — exactly one must be set. Enforced in application; a Postgres CHECK constraint adds a safety net (see §4.3).
 - `authorDisplayName` is denormalized for display. Mirrors `User.name` for team authors; mirrors the name a recipient entered on first visit otherwise. Avoids joining for every comment render.
 - `elementAnchor` is null in Phase 1. Phase 2 populates with something like `{ selector, x, y, rect }` for pin-on-element comments.
@@ -286,6 +291,7 @@ model Vote {
 ```
 
 **Notes**
+
 - Same XOR pattern as `Comment`: one of `userId` or `recipientId` set.
 - Two partial unique indexes enforce "one vote per voter per comment." Postgres treats NULL as non-restrictive in unique constraints, so this works without conflicting with the XOR.
 - Vote tally is computed on read: `SUM(direction) WHERE comment_id = ?`. Cheap with the index.
@@ -331,6 +337,7 @@ enum VersionBinding {
 ```
 
 **Notes**
+
 - `token` is an opaque random string (32 bytes, base64url encoded), generated server-side. Lookup by token is the hot path; the unique index covers it.
 - `versionBinding` defaults to LIVE. SNAPSHOT requires `boundCommitSha` — enforced via CHECK constraint (§4.3).
 - Phase 1 only emits REVIEWER links; the enum is structured so Phase 3 additions are non-breaking.
@@ -361,6 +368,7 @@ model ShareLinkRecipient {
 ```
 
 **Notes**
+
 - `clientId` is a UUID generated client-side, persisted in `localStorage` plus a cookie. On revisit the client sends it back so we resolve to the same recipient. This matches the existing tool's behavior.
 - `email` is nullable in Phase 1 (reviewer links require name only). Phase 3 email-gated viewer links populate it.
 - Email is not unique — the same person may receive different share links across multiple decks. Identity is per-link, not per-person.
@@ -412,6 +420,7 @@ enum JobStatus {
 ```
 
 **Notes**
+
 - `deckId` is nullable with SET NULL on cascade — job records survive deck hard-deletes for audit.
 - `workingBranch` is set on AI_EDIT jobs to track which git branch holds the proposed diff. After accept/reject, the branch is merged or deleted; the job record stays.
 - `input` and `output` are JSON; structure is per-kind. Application defines TypeScript types per kind.
@@ -465,6 +474,7 @@ enum MessageRole {
 ```
 
 **Notes**
+
 - `content` is JSON to accommodate structured tool calls and multi-part messages in Phase 3 (agentic mode). Phase 1 stores `{ text }`.
 - `title` is null on creation; auto-generated by a cheap model on first user message (e.g. "Tightening slide 7 hero").
 - `relatedJobId` ties a message to the job it spawned. Lets the UI render "this message produced this edit" affordances.
@@ -479,13 +489,13 @@ Only `User` and `Deck` support soft delete. Every application query that returns
 
 ### 4.2 Cascade rules summary
 
-| Action | Effect |
-|---|---|
-| Deck hard-deleted | CASCADE to comments, votes, share links, share link recipients, deck versions, AI conversations, AI messages |
-| Deck hard-deleted | SET NULL on jobs (preserved for audit) |
-| Comment hard-deleted | CASCADE to votes, reply comments |
-| Session expires or user logs out | DELETE the session row |
-| User hard-deleted | CASCADE to sessions; SET NULL on authored content (preserves history with anonymized author label) |
+| Action                           | Effect                                                                                                       |
+| -------------------------------- | ------------------------------------------------------------------------------------------------------------ |
+| Deck hard-deleted                | CASCADE to comments, votes, share links, share link recipients, deck versions, AI conversations, AI messages |
+| Deck hard-deleted                | SET NULL on jobs (preserved for audit)                                                                       |
+| Comment hard-deleted             | CASCADE to votes, reply comments                                                                             |
+| Session expires or user logs out | DELETE the session row                                                                                       |
+| User hard-deleted                | CASCADE to sessions; SET NULL on authored content (preserves history with anonymized author label)           |
 
 Phase 1 has no UI for hard-deleting users; the cascade rules are designed for completeness.
 
@@ -519,19 +529,19 @@ The "comment parent must be on the same slide" rule is enforced in application c
 
 ### 4.4 Indexes summary
 
-| Table | Indexes |
-|---|---|
-| `users` | unique on `email` |
-| `sessions` | unique on `token_hash`, index on `user_id`, index on `expires_at` |
-| `decks` | unique on `slug`, unique on `repo_path`, index on `created_by_id`, index on `deleted_at` |
-| `deck_versions` | unique on `(deck_id, tag_name)`, index on `deck_id` |
-| `comments` | index on `(deck_id, slide_id)`, index on `(deck_id, status)`, index on `parent_id` |
-| `votes` | unique partial on `(comment_id, user_id)`, unique partial on `(comment_id, recipient_id)`, index on `comment_id` |
-| `share_links` | unique on `token`, index on `deck_id` |
-| `share_link_recipients` | unique on `client_id`, index on `share_link_id` |
-| `jobs` | index on `deck_id`, index on `status` |
-| `ai_conversations` | index on `deck_id` |
-| `ai_messages` | index on `conversation_id` |
+| Table                   | Indexes                                                                                                          |
+| ----------------------- | ---------------------------------------------------------------------------------------------------------------- |
+| `users`                 | unique on `email`                                                                                                |
+| `sessions`              | unique on `token_hash`, index on `user_id`, index on `expires_at`                                                |
+| `decks`                 | unique on `slug`, unique on `repo_path`, index on `created_by_id`, index on `deleted_at`                         |
+| `deck_versions`         | unique on `(deck_id, tag_name)`, index on `deck_id`                                                              |
+| `comments`              | index on `(deck_id, slide_id)`, index on `(deck_id, status)`, index on `parent_id`                               |
+| `votes`                 | unique partial on `(comment_id, user_id)`, unique partial on `(comment_id, recipient_id)`, index on `comment_id` |
+| `share_links`           | unique on `token`, index on `deck_id`                                                                            |
+| `share_link_recipients` | unique on `client_id`, index on `share_link_id`                                                                  |
+| `jobs`                  | index on `deck_id`, index on `status`                                                                            |
+| `ai_conversations`      | index on `deck_id`                                                                                               |
+| `ai_messages`           | index on `conversation_id`                                                                                       |
 
 ### 4.5 Migrations
 

@@ -60,6 +60,7 @@ describe('bundleDeck', () => {
     const html = await bundleDeck({
       repoPath: deck.repoPath,
       commitSha: deck.headCommitSha!,
+      slug: deck.slug,
     });
 
     expect(html.startsWith('<!DOCTYPE html>')).toBe(true);
@@ -68,6 +69,7 @@ describe('bundleDeck', () => {
     expect(html).toContain('<style data-source="styles/global.css">');
     expect(html).toContain('<script data-source="scripts/global.js">');
     expect(html).toContain(`<meta name="bip-deck-commit" content="${deck.headCommitSha}">`);
+    expect(html).toContain(`<base href="/d/${deck.slug}/">`);
   });
 
   it('renders a stub for missing slide files referenced in the manifest', async () => {
@@ -88,7 +90,7 @@ describe('bundleDeck', () => {
     await repo.commit('add ghost slide reference');
     const sha = (await repo.revparse(['HEAD'])).trim();
 
-    const html = await bundleDeck({ repoPath: deck.repoPath, commitSha: sha });
+    const html = await bundleDeck({ repoPath: deck.repoPath, commitSha: sha, slug: deck.slug });
     expect(html).toContain('data-slide-id="ghost"');
     expect(html).toContain('missing slide file: slides/ghost.html');
   });
@@ -103,9 +105,9 @@ describe('bundleDeck', () => {
     await repo.commit('break manifest');
     const sha = (await repo.revparse(['HEAD'])).trim();
 
-    await expect(bundleDeck({ repoPath: deck.repoPath, commitSha: sha })).rejects.toThrow(
-      /slides array/,
-    );
+    await expect(
+      bundleDeck({ repoPath: deck.repoPath, commitSha: sha, slug: deck.slug }),
+    ).rejects.toThrow(/slides array/);
   });
 });
 

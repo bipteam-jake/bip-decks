@@ -8,6 +8,7 @@
 //   - getHeadSha: read the current HEAD commit
 //   - removeRepo: delete a repo directory from disk (used by hard-delete cron)
 
+import { spawn } from 'node:child_process';
 import { promises as fs } from 'node:fs';
 import path from 'node:path';
 import { simpleGit, type SimpleGit, type SimpleGitOptions } from 'simple-git';
@@ -101,13 +102,40 @@ export async function readFileAtCommit(
 }
 
 /**
+ * Read a single blob's raw bytes at the given commit. Binary-safe variant of
+ * `readFileAtCommit` — needed for asset serving where simple-git's string
+ * `show()` would corrupt non-UTF-8 payloads (PNG, JPEG, etc.). Spawns
+ * `git show {sha}:{relPath}` directly so we can collect stdout as a Buffer;
+ * this still lives inside lib/git.ts so the "no raw git outside this file"
+ * rule holds. Throws if git exits non-zero (e.g. path missing in commit).
+ */
+export async function readBlobAtCommit(
+  absPath: string,
+  commitSha: string,
+  relPath: string,
+): Promise<Buffer> {
+  return new Promise((resolve, reject) => {
+    const child = spawn('git', ['show', `${commitSha}:${relPath}`], {
+      cwd: absPath,
+      stdio: ['ignore', 'pipe', 'pipe'],
+    });
+    const chunks: Buffer[] = [];
+    const errChunks: Buffer[] = [];
+    child.stdout.on('data', (c: Buffer) => chunks.push(c));
+    child.stderr.on('data', (c: Buffer) => errChunks.push(c));
+    child.on('error', reject);
+    child.on('close', (code) => {
+      if (code === 0) resolve(Buffer.concat(chunks));
+      else reject(new Error(`git show exited ${code}: ${Buffer.concat(errChunks).toString()}`));
+    });
+  });
+}
+
+/**
  * List every blob path in the tree at the given commit. Wraps
  * `git ls-tree -r --name-only {sha}`. Returns POSIX-style relative paths.
  */
-export async function listFilesAtCommit(
-  absPath: string,
-  commitSha: string,
-): Promise<string[]> {
+export async function listFilesAtCommit(absPath: string, commitSha: string): Promise<string[]> {
   const raw = await client(absPath).raw(['ls-tree', '-r', '--name-only', commitSha]);
   return raw
     .split('\n')

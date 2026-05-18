@@ -55,7 +55,7 @@ export async function getBundleForDeck(
     }
   }
 
-  const html = await bundleDeck({ repoPath: deck.repoPath, commitSha });
+  const html = await bundleDeck({ repoPath: deck.repoPath, commitSha, slug: deck.slug });
 
   if (!options.bypassCache) {
     await putCachedBundle(deck.id, commitSha, html);

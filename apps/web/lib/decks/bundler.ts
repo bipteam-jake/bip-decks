@@ -13,8 +13,15 @@
 // The platform is single-tenant; the same team that writes slides operates
 // the server.
 //
+// Asset URLs: we emit `<base href="/d/{slug}/">` in the document head.
+// Browsers resolve relative URLs in HTML attributes (img src, link href, a
+// href, ...) AND in inline <style> `url()` declarations against the document
+// base, so an authored reference like `assets/foo.png` automatically becomes
+// `/d/{slug}/assets/foo.png` with no parsing on our side. The matching
+// asset-serving route is apps/web/app/d/[slug]/assets/[...path]/route.ts.
+//
 // Out of scope for Phase 1 (TODO per architecture §7):
-//   - Asset URL rewriting to signed object-storage URLs
+//   - Signed object-storage URLs for assets (will replace the inline route)
 //   - Brand-kit binding / theme override resolution
 //   - Working-branch preview bundling (separate path in the editor)
 
@@ -36,6 +43,11 @@ export interface DeckManifest {
 export interface BundleInput {
   repoPath: string;
   commitSha: string;
+  /**
+   * Deck slug — used to emit `<base href="/d/{slug}/">` so relative asset
+   * URLs in authored content resolve against the deck's asset route.
+   */
+  slug: string;
 }
 
 const STYLES_DIR = 'styles/';
@@ -82,7 +94,7 @@ async function readOptional(
  * which are referenced as-is in Phase 1).
  */
 export async function bundleDeck(input: BundleInput): Promise<string> {
-  const { repoPath, commitSha } = input;
+  const { repoPath, commitSha, slug } = input;
 
   const fileList = await listFilesAtCommit(repoPath, commitSha);
   const present = new Set(fileList);
@@ -155,6 +167,7 @@ export async function bundleDeck(input: BundleInput): Promise<string> {
     '<head>',
     '<meta charset="utf-8">',
     '<meta name="viewport" content="width=device-width,initial-scale=1">',
+    `<base href="/d/${escapeHtml(slug)}/">`,
     `<meta name="bip-deck-commit" content="${escapeHtml(commitSha)}">`,
     `<title>${escapeHtml(manifest.title)}</title>`,
     ...styleBlocks,

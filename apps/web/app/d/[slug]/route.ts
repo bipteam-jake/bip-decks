@@ -1,14 +1,15 @@
 // Public deck viewer: GET /d/{slug}
 //
-// Serves the assembled HTML bundle for the deck's current head commit. No
-// auth in Phase 1 here — share-link gating is the next implementation step
-// per phasing doc §1 (one magic-link share type). Until then this route is
-// effectively open; do not link to it from anywhere user-facing yet.
+// Serves the assembled HTML bundle for the deck's current head commit.
+// Phase 1 gates this on an authenticated TEAM session — share-link gating
+// (phasing doc §1, "one magic-link share type") will replace this when it
+// lands. Until then there is no client-facing exposure.
 
 import { NextResponse } from 'next/server';
 
 import { AppError } from '@/lib/errors';
 import { errorResponse } from '@/lib/api/responses';
+import { requireTeamUser } from '@/lib/auth/middleware';
 import { getBundleBySlug } from '@/lib/decks/bundle-service';
 
 export const runtime = 'nodejs';
@@ -16,6 +17,7 @@ export const dynamic = 'force-dynamic';
 
 export async function GET(request: Request, { params }: { params: { slug: string } }) {
   try {
+    await requireTeamUser();
     const { html, commitSha, cacheHit } = await getBundleBySlug(params.slug);
 
     // ETag = commit SHA: bundles are content-addressed, so a matching
