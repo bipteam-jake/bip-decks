@@ -39,4 +39,11 @@ export const env = {
     // repo per deck. Bind-mounted in Docker; on host it lives at ./deck-repos.
     return optional('DECK_REPOS_PATH', `${process.cwd()}/deck-repos`);
   },
+  get anthropicApiKey(): string {
+    return required('ANTHROPIC_API_KEY');
+  },
+  get anthropicDefaultModel(): string {
+    // Aligns with .env.example and docs/bip-deck-platform-deployment.md §6.
+    return optional('ANTHROPIC_DEFAULT_MODEL', 'claude-sonnet-4-5');
+  },
 };
