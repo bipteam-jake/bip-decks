@@ -61,3 +61,10 @@ export class ForbiddenError extends AppError {
     this.name = 'ForbiddenError';
   }
 }
+
+export class NotFoundError extends AppError {
+  constructor(message = 'Not found', code = 'not_found') {
+    super(code, message, 404);
+    this.name = 'NotFoundError';
+  }
+}

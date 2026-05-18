@@ -34,4 +34,9 @@ export const env = {
   get isProduction(): boolean {
     return this.nodeEnv === 'production';
   },
+  get deckReposPath(): string {
+    // Per deployment doc §4 — absolute path to the directory holding one git
+    // repo per deck. Bind-mounted in Docker; on host it lives at ./deck-repos.
+    return optional('DECK_REPOS_PATH', `${process.cwd()}/deck-repos`);
+  },
 };
