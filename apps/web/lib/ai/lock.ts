@@ -33,12 +33,14 @@ export interface LockState {
   ageMs: number | null;
 }
 
-function inspect(deck: Pick<Deck, 'editingUserId' | 'editingHeartbeatAt'>, userId: string): LockState {
+function inspect(
+  deck: Pick<Deck, 'editingUserId' | 'editingHeartbeatAt'>,
+  userId: string,
+): LockState {
   const now = Date.now();
   const heartbeat = deck.editingHeartbeatAt ? deck.editingHeartbeatAt.getTime() : null;
   const fresh = heartbeat !== null && now - heartbeat < STALE_AFTER_MS;
-  const heldByOther =
-    fresh && deck.editingUserId !== null && deck.editingUserId !== userId;
+  const heldByOther = fresh && deck.editingUserId !== null && deck.editingUserId !== userId;
   return {
     heldByOther,
     ownerUserId: deck.editingUserId ?? null,

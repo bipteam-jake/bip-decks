@@ -29,12 +29,7 @@ import {
 import { getBundleForDeck } from '@/lib/decks/bundle-service';
 import { invalidateCachedBundle } from '@/lib/decks/bundle-cache';
 import { getDeckById } from '@/lib/decks/service';
-import {
-  NotFoundError,
-  ConflictError,
-  ValidationError,
-  AppError,
-} from '@/lib/errors';
+import { NotFoundError, ConflictError, ValidationError, AppError } from '@/lib/errors';
 import { acquireOrRefreshLock } from '@/lib/ai/lock';
 import type { AIEditResponse } from './response-parser';
 
@@ -250,10 +245,7 @@ export async function acceptProposal(input: AcceptProposalInput): Promise<Accept
     throw new ValidationError('Job is not an AI edit', 'job_wrong_kind');
   }
   if (job.status !== 'AWAITING_REVIEW') {
-    throw new ConflictError(
-      `Job is ${job.status.toLowerCase()}, cannot accept`,
-      'job_not_pending',
-    );
+    throw new ConflictError(`Job is ${job.status.toLowerCase()}, cannot accept`, 'job_not_pending');
   }
   if (!job.deckId || !job.workingBranch) {
     throw new ValidationError('Job is malformed (missing deck or branch)', 'job_malformed');
@@ -269,11 +261,10 @@ export async function acceptProposal(input: AcceptProposalInput): Promise<Accept
   // Head-moved guard (§7 accept step 2). With the lock this shouldn't trip;
   // we check anyway because the FS is the source of truth.
   if (deck.headCommitSha !== output.baseCommitSha) {
-    throw new ConflictError(
-      'Deck head moved since this proposal was created',
-      'head_moved',
-      { expected: output.baseCommitSha, actual: deck.headCommitSha },
-    );
+    throw new ConflictError('Deck head moved since this proposal was created', 'head_moved', {
+      expected: output.baseCommitSha,
+      actual: deck.headCommitSha,
+    });
   }
 
   const oldHead = deck.headCommitSha;
@@ -335,7 +326,9 @@ export async function acceptProposal(input: AcceptProposalInput): Promise<Accept
         message,
       }),
     );
-    throw err instanceof AppError ? err : new AppError('accept_failed', 'Failed to accept proposal', 500);
+    throw err instanceof AppError
+      ? err
+      : new AppError('accept_failed', 'Failed to accept proposal', 500);
   }
 }
 

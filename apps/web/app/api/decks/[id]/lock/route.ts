@@ -11,12 +11,7 @@ import { NextResponse, type NextRequest } from 'next/server';
 
 import { requireTeamUser } from '@/lib/auth/middleware';
 import { errorResponse } from '@/lib/api/responses';
-import {
-  acquireOrRefreshLock,
-  getLockState,
-  releaseLock,
-  takeOverLock,
-} from '@/lib/ai/lock';
+import { acquireOrRefreshLock, getLockState, releaseLock, takeOverLock } from '@/lib/ai/lock';
 
 export const runtime = 'nodejs';
 export const dynamic = 'force-dynamic';

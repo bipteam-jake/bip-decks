@@ -189,11 +189,9 @@ export async function postUserMessage(input: PostMessageInput): Promise<PostMess
   let supersededJobIds: string[] = [];
   if (pending.length > 0) {
     if (!input.supersedePending) {
-      throw new ConflictError(
-        'A previous proposal is still pending review',
-        'pending_proposal',
-        { pendingJobIds: pending.map((p) => p.id) },
-      );
+      throw new ConflictError('A previous proposal is still pending review', 'pending_proposal', {
+        pendingJobIds: pending.map((p) => p.id),
+      });
     }
     // Carry these out after we persist the user message — we need that
     // message's id as the supersede marker (§7).
@@ -334,9 +332,10 @@ export async function postUserMessage(input: PostMessageInput): Promise<PostMess
       const message = (err as Error).message;
       const failureContent: AssistantMessageContent = {
         kind: 'assistant_error',
-        raw: typeof assistantContent === 'object' && 'raw' in assistantContent
-          ? assistantContent.raw
-          : '',
+        raw:
+          typeof assistantContent === 'object' && 'raw' in assistantContent
+            ? assistantContent.raw
+            : '',
         userMessage:
           'I drafted a change but couldn’t prepare the preview. Try rephrasing or try again.',
         error: { kind: 'gateway', message },

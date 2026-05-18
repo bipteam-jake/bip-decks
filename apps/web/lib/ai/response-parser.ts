@@ -77,7 +77,10 @@ function checkRules(response: AIEditResponse): ParseFailure | null {
     if (pathErr) {
       return { kind: 'rule', message: `change to "${change.file}": ${pathErr}` };
     }
-    if (change.file.startsWith('slides/') && !/\<section\b[^>]*class="[^"]*\bslide\b/.test(change.content)) {
+    if (
+      change.file.startsWith('slides/') &&
+      !/\<section\b[^>]*class="[^"]*\bslide\b/.test(change.content)
+    ) {
       return {
         kind: 'rule',
         message: `slide file "${change.file}" must contain a <section class="slide ..."> element`,

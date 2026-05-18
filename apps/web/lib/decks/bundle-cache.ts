@@ -56,10 +56,7 @@ export async function putCachedBundle(
  * SHA is no longer reachable; eviction would happen via TTL anyway, but
  * dropping it eagerly keeps the cache footprint tight on chatty sessions).
  */
-export async function invalidateCachedBundle(
-  deckId: string,
-  commitSha: string,
-): Promise<void> {
+export async function invalidateCachedBundle(deckId: string, commitSha: string): Promise<void> {
   if (!(await ensureReady())) return;
   try {
     await redis.del(key(deckId, commitSha));
