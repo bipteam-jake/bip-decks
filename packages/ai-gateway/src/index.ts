@@ -96,6 +96,14 @@ export async function callClaude(
   systemPrompt: string,
   options: CallClaudeOptions = {},
 ): Promise<ClaudeResponse> {
+  // Test-only short-circuit. When ANTHROPIC_API_KEY === 'mock' we never
+  // contact Anthropic and instead return a deterministic canned proposal.
+  // Used by Playwright smoke tests so they don't spend tokens or depend on
+  // network reachability. Not a Phase 2 mock framework — just enough to
+  // exercise the proposal -> accept pipeline.
+  if (process.env.ANTHROPIC_API_KEY === 'mock') {
+    return mockClaudeResponse(messages, options);
+  }
   const client = getClient();
   const model = options.model ?? defaultModel();
   const maxTokens = options.maxTokens ?? 2048;
@@ -164,4 +172,35 @@ export async function callClaude(
   } finally {
     clearTimeout(timer);
   }
+}
+
+/**
+ * Deterministic mock proposal returned when ANTHROPIC_API_KEY === 'mock'.
+ * The shape matches the strict-JSON contract from ai-editor.md §6 so the
+ * response-parser accepts it. The slide payload contains the user's prompt
+ * verbatim so smoke tests can assert the round-trip.
+ */
+function mockClaudeResponse(messages: ClaudeMessage[], options: CallClaudeOptions): ClaudeResponse {
+  const lastUser = [...messages].reverse().find((m) => m.role === 'user')?.content ?? '';
+  const safe = lastUser.replace(/[<>&"]/g, ' ').slice(0, 200);
+  const payload = {
+    explanation: 'Mock proposal: applied your request to slide 1.',
+    changes: [
+      {
+        file: 'slides/s1.html',
+        operation: 'replace' as const,
+        content: `<section class="slide" data-slide-id="s1" data-slide-title="Mock">\n  <h1>${safe || 'Mock slide'}</h1>\n</section>\n`,
+      },
+    ],
+  };
+  const content = JSON.stringify(payload);
+  const model = options.model ?? defaultModel();
+  return {
+    content,
+    model,
+    tokensIn: 0,
+    tokensOut: 0,
+    costCents: 0,
+    stopReason: 'end_turn',
+  };
 }
