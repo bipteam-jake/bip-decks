@@ -13,10 +13,7 @@ import { z } from 'zod';
 import { requireTeamUser } from '@/lib/auth/middleware';
 import { errorResponse } from '@/lib/api/responses';
 import { ValidationError } from '@/lib/errors';
-import {
-  issueShareLink,
-  listShareLinksForDeck,
-} from '@/lib/share-links/service';
+import { issueShareLink, listShareLinksForDeck } from '@/lib/share-links/service';
 
 export const runtime = 'nodejs';
 export const dynamic = 'force-dynamic';

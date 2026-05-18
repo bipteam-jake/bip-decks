@@ -51,9 +51,10 @@ export function ClaimForm({ token }: Props) {
           clientId: getOrCreateClientId(token),
         }),
       });
-      const data = (await res.json().catch(() => null)) as
-        | { redirectTo?: string; error?: { message?: string } }
-        | null;
+      const data = (await res.json().catch(() => null)) as {
+        redirectTo?: string;
+        error?: { message?: string };
+      } | null;
       if (!res.ok || !data?.redirectTo) {
         throw new Error(data?.error?.message ?? 'Unable to continue. Please try again.');
       }

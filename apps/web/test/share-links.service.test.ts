@@ -25,12 +25,7 @@ import {
   resolveActiveShareLink,
   revokeShareLink,
 } from '@/lib/share-links/service';
-import {
-  ConflictError,
-  ForbiddenError,
-  NotFoundError,
-  ValidationError,
-} from '@/lib/errors';
+import { ConflictError, ForbiddenError, NotFoundError, ValidationError } from '@/lib/errors';
 import type { User } from '@bip/db';
 
 const TEST_TAG = '+sharelinkvitest@bip.test';

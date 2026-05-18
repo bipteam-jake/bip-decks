@@ -19,9 +19,7 @@ import { getBundleBySlug, getBundleForDeck } from '@/lib/decks/bundle-service';
 import { getDeckBySlug } from '@/lib/decks/service';
 import { getCommentViewer } from '@/lib/comments/viewer';
 import { renderCommentsOverlay } from '@/lib/comments/overlay';
-import {
-  loadActiveRecipientForDeck,
-} from '@/lib/share-links/service';
+import { loadActiveRecipientForDeck } from '@/lib/share-links/service';
 import { readRecipientCookie } from '@/lib/share-links/cookies';
 
 export const runtime = 'nodejs';
@@ -109,8 +107,7 @@ export async function GET(request: Request, { params }: { params: { slug: string
       // Vary ETag by viewer identity so two viewers don't share bytes via
       // intermediary caches. Recipients get an `r:` prefix to keep keys
       // disjoint from team users.
-      const viewerKey =
-        viewer.kind === 'team' ? `u:${viewer.user.id}` : `r:${viewer.recipient.id}`;
+      const viewerKey = viewer.kind === 'team' ? `u:${viewer.user.id}` : `r:${viewer.recipient.id}`;
       etagSeed = `${commitSha}.${viewerKey}`;
     }
 

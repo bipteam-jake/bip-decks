@@ -17,12 +17,7 @@ import { prisma } from '@/lib/prisma';
 import { env } from '@/lib/env';
 import { sendEmail } from '@/lib/email';
 import { generateShareLinkToken } from '@/lib/share-links/tokens';
-import {
-  ConflictError,
-  ForbiddenError,
-  NotFoundError,
-  ValidationError,
-} from '@/lib/errors';
+import { ConflictError, ForbiddenError, NotFoundError, ValidationError } from '@/lib/errors';
 import type { Deck, ShareLink, ShareLinkRecipient, User } from '@bip/db';
 
 const DEFAULT_EXPIRY_DAYS = 30;
@@ -69,7 +64,7 @@ export async function issueShareLink(input: IssueShareLinkInput): Promise<Issued
   const expiresAt =
     input.expiresAt === null
       ? null
-      : input.expiresAt ?? new Date(Date.now() + DEFAULT_EXPIRY_DAYS * 24 * 60 * 60 * 1000);
+      : (input.expiresAt ?? new Date(Date.now() + DEFAULT_EXPIRY_DAYS * 24 * 60 * 60 * 1000));
 
   const token = generateShareLinkToken();
   const shareLink = await prisma.shareLink.create({
@@ -291,10 +286,7 @@ export async function loadActiveRecipientForDeck(
   if (!recipient) return null;
   if (recipient.shareLink.deckId !== deckId) return null;
   if (recipient.shareLink.revokedAt) return null;
-  if (
-    recipient.shareLink.expiresAt &&
-    recipient.shareLink.expiresAt.getTime() <= Date.now()
-  ) {
+  if (recipient.shareLink.expiresAt && recipient.shareLink.expiresAt.getTime() <= Date.now()) {
     return null;
   }
   // Strip the joined shareLink to match the bare ShareLinkRecipient type.

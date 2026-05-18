@@ -87,4 +87,3 @@ export function viewerForClient(viewer: CommentViewer): {
 export async function loadRecipient(id: string): Promise<ShareLinkRecipient | null> {
   return prisma.shareLinkRecipient.findUnique({ where: { id } });
 }
-
