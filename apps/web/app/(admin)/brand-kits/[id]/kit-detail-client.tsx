@@ -32,6 +32,7 @@ import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs';
 import { Textarea } from '@/components/ui/textarea';
 import { FONT_CATALOG, familyCssValue, lookupFontByValue } from '@/lib/brand-kits/font-catalog';
 import type { BrandTokens, BrandVoice } from '@/lib/brand-kits/tokens';
+import { PatternsTab } from './_components/patterns-tab';
 
 export type VersionSummary = {
   id: string;
@@ -81,6 +82,7 @@ export function KitDetailClient(props: KitDetailClientProps) {
           <TabsTrigger value="voice">Voice</TabsTrigger>
           <TabsTrigger value="identity">Identity</TabsTrigger>
           <TabsTrigger value="references">References</TabsTrigger>
+          <TabsTrigger value="patterns">Patterns</TabsTrigger>
           <TabsTrigger value="versions">Versions</TabsTrigger>
         </TabsList>
 
@@ -105,6 +107,14 @@ export function KitDetailClient(props: KitDetailClientProps) {
             <ReferencesTab kitId={props.kitId} versionId={props.latestVersion.id} />
           ) : (
             <EmptyVersionNotice resource="reference materials" />
+          )}
+        </TabsContent>
+
+        <TabsContent value="patterns">
+          {props.latestVersion ? (
+            <PatternsTab kitId={props.kitId} versionId={props.latestVersion.id} />
+          ) : (
+            <EmptyVersionNotice resource="slide patterns" />
           )}
         </TabsContent>
 

@@ -13,7 +13,8 @@ import type { AIConversation, AIMessage, Deck, Job, Prisma, User } from '@bip/db
 import { prisma } from '@/lib/prisma';
 import { getDeckById } from '@/lib/decks/service';
 import { ConflictError, NotFoundError } from '@/lib/errors';
-import { callClaude, type ClaudeMessage } from '@bip/ai-gateway';
+import { buildPatternSystemPrompt, callClaude, type ClaudeMessage } from '@bip/ai-gateway';
+import { listPatterns } from '@/lib/brand-kits/patterns-service';
 
 import { AI_EDITOR_SYSTEM_PROMPT } from './system-prompt';
 import { buildDeckStateBlock } from './context';
@@ -157,6 +158,28 @@ export interface PostMessageResult {
 }
 
 /**
+ * Assemble the system prompt for an AI turn. The base editor prompt is
+ * always included; if the deck is bound to a brand-kit version with
+ * approved patterns, the pattern catalog is appended so Claude can reach
+ * for them by slug. See packages/ai-gateway buildPatternSystemPrompt for
+ * the prompt block shape.
+ */
+async function assembleSystemPrompt(brandKitVersionId: string | null): Promise<string> {
+  if (!brandKitVersionId) return AI_EDITOR_SYSTEM_PROMPT;
+  const patterns = await listPatterns({ brandKitVersionId, approvedOnly: true, limit: 200 });
+  return buildPatternSystemPrompt(
+    AI_EDITOR_SYSTEM_PROMPT,
+    patterns.map((p) => ({
+      slug: p.slug,
+      name: p.name,
+      description: p.description,
+      category: p.category,
+      parameters: p.parameters,
+    })),
+  );
+}
+
+/**
  * Turn replay: convert persisted AIMessage rows back into a Claude messages
  * array. Skips error assistant messages (we don't want Claude to "see" its
  * own bad output) and any system rows (unused in Phase 1). Strips deck_state
@@ -266,7 +289,8 @@ export async function postUserMessage(input: PostMessageInput): Promise<PostMess
   let parsedResponse: AIEditResponse | null = null;
 
   try {
-    const response = await callClaude(claudeMessages, AI_EDITOR_SYSTEM_PROMPT, {
+    const systemPrompt = await assembleSystemPrompt(deck.brandKitVersionId);
+    const response = await callClaude(claudeMessages, systemPrompt, {
       requestId: input.requestId,
     });
     model = response.model;

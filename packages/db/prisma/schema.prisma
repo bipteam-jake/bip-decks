@@ -39,6 +39,7 @@ model User {
   jobsCreated         Job[]
   brandKitsCreated    BrandKit[]        @relation("BrandKitCreator")
   brandKitVersions    BrandKitVersion[] @relation("BrandKitVersionPublisher")
+  brandKitPatterns    BrandKitPattern[] @relation("BrandKitPatternCreator")
 
   @@map("users")
 }
@@ -364,6 +365,7 @@ model BrandKitVersion {
   publishedBy    User                    @relation("BrandKitVersionPublisher", fields: [publishedById], references: [id])
   identityAssets BrandKitIdentityAsset[]
   references     BrandKitReference[]
+  patterns       BrandKitPattern[]
   decks          Deck[]
 
   @@unique([brandKitId, versionLabel])
@@ -417,4 +419,50 @@ model BrandKitReference {
 enum BrandKitReferenceKind {
   PDF
   IMAGE
+}
+
+// ---------------------------------------------------------------------------
+// Brand-kit patterns (Phase 2.2)
+//
+// A pattern is a reusable on-brand slide layout scoped to a single
+// BrandKitVersion. The HTML body uses `{{paramName}}` placeholders that get
+// substituted at instantiation time. Patterns are surfaced to the AI editor
+// as additional system-prompt context for decks bound to the kit, and via a
+// pattern-picker in the chat input.
+//
+// Storage: html/css live in Postgres (snippets are small). Thumbnails are
+// stored in S3 (optional; absent until Playwright rendering arrives in
+// Phase 3). Approved patterns are visible to the AI editor; unapproved
+// patterns are draft-only.
+//
+// Patterns are immutable post-creation aside from `approved` and metadata
+// (name/description/category/tags). To "edit" a pattern, publish a new
+// version of the kit and re-save the pattern there.
+// ---------------------------------------------------------------------------
+
+model BrandKitPattern {
+  id                String   @id @default(uuid()) @db.Uuid
+  brandKitVersionId String   @map("brand_kit_version_id") @db.Uuid
+  slug              String
+  name              String
+  description       String?
+  category          String   @default("general")
+  tags              String[] @default([])
+  htmlTemplate      String   @map("html_template")
+  cssTemplate       String?  @map("css_template")
+  parameters        Json
+  thumbnailS3Key    String?  @map("thumbnail_s3_key")
+  approved          Boolean  @default(false)
+  createdById       String   @map("created_by_id") @db.Uuid
+  createdAt         DateTime @default(now()) @map("created_at")
+  updatedAt         DateTime @updatedAt @map("updated_at")
+
+  brandKitVersion BrandKitVersion @relation(fields: [brandKitVersionId], references: [id], onDelete: Cascade)
+  createdBy       User            @relation("BrandKitPatternCreator", fields: [createdById], references: [id])
+
+  @@unique([brandKitVersionId, slug])
+  @@index([brandKitVersionId])
+  @@index([approved])
+  @@index([category])
+  @@map("brand_kit_patterns")
 }
