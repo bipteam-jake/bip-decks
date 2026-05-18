@@ -23,7 +23,7 @@ type Ctx = { params: { id: string } };
 
 export async function GET(req: NextRequest, { params }: Ctx): Promise<NextResponse> {
   try {
-    const viewer = await getCommentViewer();
+    const viewer = await getCommentViewer({ deckId: params.id });
     if (!viewer) throw new UnauthorizedError();
     const slideId = req.nextUrl.searchParams.get('slideId') ?? undefined;
     const comments = await listComments({ deckId: params.id, slideId, viewer });
@@ -41,7 +41,7 @@ const createSchema = z.object({
 
 export async function POST(req: NextRequest, { params }: Ctx): Promise<NextResponse> {
   try {
-    const viewer = await getCommentViewer();
+    const viewer = await getCommentViewer({ deckId: params.id });
     if (!viewer) throw new UnauthorizedError();
     const parsed = createSchema.safeParse(await req.json().catch(() => null));
     if (!parsed.success) throw new ValidationError('Invalid request body', parsed.error.flatten());

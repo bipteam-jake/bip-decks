@@ -46,4 +46,21 @@ export const env = {
     // Aligns with .env.example and docs/bip-deck-platform-deployment.md §6.
     return optional('ANTHROPIC_DEFAULT_MODEL', 'claude-sonnet-4-5');
   },
+
+  // --- Transactional email (Phase 1: magic-link share invites only).
+  // EMAIL_PROVIDER is structural for v1.5 multi-provider; we only implement
+  // 'resend' today. 'console' is a dev-only sink that logs instead of sending.
+  get emailProvider(): 'resend' | 'console' {
+    const v = optional('EMAIL_PROVIDER', 'console').toLowerCase();
+    if (v === 'resend' || v === 'console') return v;
+    throw new Error(`Unknown EMAIL_PROVIDER: ${v} (supported: resend, console)`);
+  },
+  get emailApiKey(): string {
+    // Only required when the provider actually needs it. Validated at
+    // call time by the email module, not here.
+    return optional('EMAIL_API_KEY', '');
+  },
+  get emailFrom(): string {
+    return required('EMAIL_FROM');
+  },
 };

@@ -255,8 +255,7 @@ export async function voteComment(input: VoteInput): Promise<VoteResult> {
   if (!comment) throw new NotFoundError('Comment not found');
 
   const isTeam = input.viewer.kind === 'team';
-  const voterId =
-    input.viewer.kind === 'team' ? input.viewer.user.id : input.viewer.recipient.id;
+  const voterId = input.viewer.kind === 'team' ? input.viewer.user.id : input.viewer.recipient.id;
 
   let vote: Vote | null;
   if (input.direction === 0) {

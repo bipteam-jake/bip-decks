@@ -2,13 +2,14 @@
 // team `User` (admin/internal) or a `ShareLinkRecipient` (magic-link visitor).
 // Comments and votes belong to one or the other (schema §3.5/§3.6 XOR).
 //
-// Phase 1 only wires the team path here. The share-link redemption flow that
-// produces a ShareLinkRecipient cookie is not built yet (phasing doc §1
-// "One sharing flow: magic-link invite…" — separate session). When that
-// lands, this is the single place to add the recipient branch.
+// The recipient branch is deck-scoped: a recipient cookie is keyed per deck
+// (one signed cookie per `bip_r_<deckId>`), so the resolver needs the
+// deckId to know which cookie to read.
 
 import { prisma } from '@/lib/prisma';
 import { getSessionContext } from '@/lib/auth/middleware';
+import { readRecipientCookie } from '@/lib/share-links/cookies';
+import { loadActiveRecipientForDeck } from '@/lib/share-links/service';
 import type { User, ShareLinkRecipient } from '@bip/db';
 
 /**
@@ -20,14 +21,22 @@ export type CommentViewer =
   | { kind: 'team'; user: User; displayName: string }
   | { kind: 'recipient'; recipient: ShareLinkRecipient; displayName: string };
 
+export interface GetCommentViewerOptions {
+  /** Required to resolve a share-link recipient cookie. Team-only flows
+   *  may omit it. */
+  deckId?: string;
+}
+
 /**
- * Resolve the current viewer for the deck runtime. Returns null if the caller
- * is unauthenticated (no team session, no recipient cookie).
+ * Resolve the current viewer for the deck runtime. Returns null if the
+ * caller is unauthenticated.
  *
- * Order: team session first (admins authoring their own decks are the
- * common case in Phase 1), then recipient cookie.
+ * Order: team session first (the common case in Phase 1 — admins authoring
+ * their own decks), then per-deck recipient cookie when a deckId is given.
  */
-export async function getCommentViewer(): Promise<CommentViewer | null> {
+export async function getCommentViewer(
+  opts: GetCommentViewerOptions = {},
+): Promise<CommentViewer | null> {
   const teamCtx = await getSessionContext();
   if (teamCtx) {
     return {
@@ -37,11 +46,20 @@ export async function getCommentViewer(): Promise<CommentViewer | null> {
     };
   }
 
-  // TODO(phase 1, share-link session): once the magic-link redemption flow
-  // ships, read the recipient cookie here, validate the signed token, and
-  // load the ShareLinkRecipient row. Until then, no recipient identity
-  // exists yet.
-  // See docs/bip-deck-platform-architecture.md §8 (Reviewer link type).
+  if (opts.deckId) {
+    const recipientId = readRecipientCookie(opts.deckId);
+    if (recipientId) {
+      const recipient = await loadActiveRecipientForDeck(recipientId, opts.deckId);
+      if (recipient) {
+        return {
+          kind: 'recipient',
+          recipient,
+          displayName: recipient.displayName,
+        };
+      }
+    }
+  }
+
   return null;
 }
 
@@ -63,10 +81,10 @@ export function viewerForClient(viewer: CommentViewer): {
 }
 
 /**
- * Internal: resolves the recipient row for a comment by id. Used by the
- * service for vote attribution. Returns null for team-authored votes.
- * Kept thin — the prisma client is the source of truth.
+ * Internal: resolves the recipient row for a comment by id. Returns null
+ * if not found. Kept thin — the prisma client is the source of truth.
  */
 export async function loadRecipient(id: string): Promise<ShareLinkRecipient | null> {
   return prisma.shareLinkRecipient.findUnique({ where: { id } });
 }
+

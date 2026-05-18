@@ -6,8 +6,9 @@
 import { NextResponse, type NextRequest } from 'next/server';
 import { z } from 'zod';
 
+import { prisma } from '@/lib/prisma';
 import { errorResponse } from '@/lib/api/responses';
-import { UnauthorizedError, ValidationError } from '@/lib/errors';
+import { NotFoundError, UnauthorizedError, ValidationError } from '@/lib/errors';
 import { getCommentViewer } from '@/lib/comments/viewer';
 import { voteComment } from '@/lib/comments/service';
 
@@ -20,9 +21,24 @@ const voteSchema = z.object({
   direction: z.union([z.literal(1), z.literal(-1)]),
 });
 
+/**
+ * Recipients vote via per-deck cookies, so we first resolve the comment's
+ * deck id to look up the correct cookie. One extra round-trip is fine — vote
+ * actions are user-initiated, not bulk.
+ */
+async function deckIdForComment(commentId: string): Promise<string> {
+  const row = await prisma.comment.findUnique({
+    where: { id: commentId },
+    select: { deckId: true },
+  });
+  if (!row) throw new NotFoundError('Comment not found');
+  return row.deckId;
+}
+
 export async function POST(req: NextRequest, { params }: Ctx): Promise<NextResponse> {
   try {
-    const viewer = await getCommentViewer();
+    const deckId = await deckIdForComment(params.id);
+    const viewer = await getCommentViewer({ deckId });
     if (!viewer) throw new UnauthorizedError();
     const parsed = voteSchema.safeParse(await req.json().catch(() => null));
     if (!parsed.success) throw new ValidationError('Invalid request body', parsed.error.flatten());
@@ -39,7 +55,8 @@ export async function POST(req: NextRequest, { params }: Ctx): Promise<NextRespo
 
 export async function DELETE(_req: NextRequest, { params }: Ctx): Promise<NextResponse> {
   try {
-    const viewer = await getCommentViewer();
+    const deckId = await deckIdForComment(params.id);
+    const viewer = await getCommentViewer({ deckId });
     if (!viewer) throw new UnauthorizedError();
     const result = await voteComment({ commentId: params.id, direction: 0, viewer });
     return NextResponse.json(result);
