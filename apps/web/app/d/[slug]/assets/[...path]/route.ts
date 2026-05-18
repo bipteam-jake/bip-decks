@@ -97,7 +97,7 @@ export async function GET(
       return new NextResponse(null, { status: 304, headers: { etag } });
     }
 
-    return new NextResponse(bytes, {
+    return new NextResponse(new Uint8Array(bytes), {
       status: 200,
       headers: {
         'content-type': contentTypeFor(relPath),
