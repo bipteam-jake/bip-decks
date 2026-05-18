@@ -25,7 +25,10 @@ export async function GET(
     if (job.kind !== 'AI_EDIT' || !job.deckId) {
       throw new ValidationError('Job has no diff to show', 'job_no_diff');
     }
-    const output = (job.output ?? null) as { proposedCommitSha?: string; baseCommitSha?: string } | null;
+    const output = (job.output ?? null) as {
+      proposedCommitSha?: string;
+      baseCommitSha?: string;
+    } | null;
     if (!output?.proposedCommitSha || !output.baseCommitSha) {
       throw new ValidationError('Job has no commit metadata', 'job_no_diff');
     }

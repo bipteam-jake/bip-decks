@@ -22,10 +22,7 @@ import { useRouter } from 'next/navigation';
 import dynamic from 'next/dynamic';
 
 import type { AIConversation, AIMessage, Job } from '@bip/db';
-import {
-  HEARTBEAT_INTERVAL_MS,
-  type LockState,
-} from '@/lib/ai/lock';
+import { HEARTBEAT_INTERVAL_MS, type LockState } from '@/lib/ai/lock';
 
 const CodeDiff = dynamic(() => import('./code-diff').then((m) => m.CodeDiff), {
   ssr: false,
@@ -87,6 +84,13 @@ export function DeckEditor(props: DeckEditorProps) {
   const [lock, setLock] = useState<LockState | null>(null);
   const [accepting, setAccepting] = useState<string | null>(null);
   const [rejecting, setRejecting] = useState<string | null>(null);
+  // Local view of deck head. Props refresh lags behind the accept response
+  // because router.refresh() is async; tracking it here lets us cache-bust
+  // the preview iframe immediately so the new commit's HTML is visible
+  // without a manual reload (the /d/{slug} response is cache-control:
+  // private, max-age=60 — without a URL bump the browser would re-use the
+  // pre-edit bytes).
+  const [headCommitSha, setHeadCommitSha] = useState<string | null>(props.deck.headCommitSha);
 
   // Derive the latest pending proposal from messages + jobs. A message has a
   // proposal if its content.kind === 'assistant' AND jobs[relatedJobId] is
@@ -262,9 +266,11 @@ export function DeckEditor(props: DeckEditorProps) {
         }
         const body = (await res.json()) as { job: Job; newHeadCommitSha: string };
         setJobs((prev) => ({ ...prev, [body.job.id]: body.job }));
-        // The deck head changed — refresh the server-fetched props so the
-        // main preview iframe gets the new SHA and any cached bundles are
-        // re-resolved with the new context.
+        // Bump local head so CurrentPreview's iframe remounts with a fresh
+        // URL (see headCommitSha state comment above). router.refresh()
+        // still runs so the page header (HEAD short sha) and any other
+        // server-fetched data stay in sync.
+        setHeadCommitSha(body.newHeadCommitSha);
         router.refresh();
       } catch (err) {
         setError((err as Error).message);
@@ -319,7 +325,7 @@ export function DeckEditor(props: DeckEditorProps) {
         {pending ? (
           <ProposalPreview deckSlug={props.deck.slug} pending={pending} />
         ) : (
-          <CurrentPreview deckSlug={props.deck.slug} headCommitSha={props.deck.headCommitSha} />
+          <CurrentPreview deckSlug={props.deck.slug} headCommitSha={headCommitSha} />
         )}
       </section>
 
@@ -329,9 +335,7 @@ export function DeckEditor(props: DeckEditorProps) {
           <span className="text-xs font-semibold uppercase tracking-wide text-neutral-600">
             AI Editor
           </span>
-          {locked && (
-            <LockBadge lock={lock!} onTakeOver={() => void takeOverLock()} />
-          )}
+          {locked && <LockBadge lock={lock!} onTakeOver={() => void takeOverLock()} />}
         </div>
 
         <MessageList
@@ -384,8 +388,12 @@ function CurrentPreview({
         </a>
       </div>
       <iframe
+        // Both key and the query param change with the head sha: the key
+        // forces a React remount, and the ?v={sha} bypasses the
+        // /d/{slug} response's 60s private cache so the new commit's
+        // HTML loads immediately after Accept.
         key={headCommitSha ?? 'empty'}
-        src={`/d/${deckSlug}`}
+        src={`/d/${deckSlug}${headCommitSha ? `?v=${headCommitSha}` : ''}`}
         title="Deck preview"
         className="h-[calc(100vh-15rem)] w-full rounded-b bg-white"
       />
@@ -428,9 +436,7 @@ function ProposalPreview({
             type="button"
             onClick={() => setTab('code')}
             className={`rounded px-2 py-0.5 text-xs ${
-              tab === 'code'
-                ? 'bg-neutral-900 text-white'
-                : 'text-neutral-700 hover:bg-neutral-100'
+              tab === 'code' ? 'bg-neutral-900 text-white' : 'text-neutral-700 hover:bg-neutral-100'
             }`}
           >
             Code
@@ -521,7 +527,7 @@ function MessageList({
     <div ref={scrollerRef} className="flex-1 space-y-3 overflow-y-auto px-3 py-3">
       {messages.map((m) => {
         const c = asContent(m.content);
-        const job = m.relatedJobId ? jobs[m.relatedJobId] ?? null : null;
+        const job = m.relatedJobId ? (jobs[m.relatedJobId] ?? null) : null;
         return (
           <MessageRow
             key={m.id}
@@ -574,7 +580,16 @@ function MessageRow({
         <div className="max-w-[90%] rounded-2xl rounded-bl-sm bg-neutral-100 px-3 py-2 text-sm text-neutral-900 whitespace-pre-wrap">
           {content.parsed.explanation}
         </div>
-        {job && <ProposalActions job={job} isPending={isPending} accepting={accepting} rejecting={rejecting} onAccept={onAccept} onReject={onReject} />}
+        {job && (
+          <ProposalActions
+            job={job}
+            isPending={isPending}
+            accepting={accepting}
+            rejecting={rejecting}
+            onAccept={onAccept}
+            onReject={onReject}
+          />
+        )}
       </div>
     );
   }
@@ -730,9 +745,7 @@ function Composer({
           }}
           rows={3}
           disabled={disabled || sending}
-          placeholder={
-            disabled ? 'Editor locked by another user' : 'Ask Claude to change a slide…'
-          }
+          placeholder={disabled ? 'Editor locked by another user' : 'Ask Claude to change a slide…'}
           className="w-full resize-none rounded border border-neutral-300 px-2 py-1.5 text-sm focus:border-neutral-900 focus:outline-none disabled:bg-neutral-50"
         />
         <div className="mt-1 flex items-center justify-between text-[11px] text-neutral-500">
@@ -754,9 +767,7 @@ function LockBadge({ lock, onTakeOver }: { lock: LockState; onTakeOver: () => vo
   const age = lock.ageMs ? Math.round(lock.ageMs / 1000) : null;
   return (
     <div className="flex items-center gap-2 rounded bg-amber-100 px-2 py-0.5 text-[11px] text-amber-900">
-      <span>
-        Locked{age !== null ? ` · ${age}s ago` : ''}
-      </span>
+      <span>Locked{age !== null ? ` · ${age}s ago` : ''}</span>
       <button
         type="button"
         onClick={onTakeOver}

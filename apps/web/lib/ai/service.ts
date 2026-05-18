@@ -109,12 +109,8 @@ export async function getConversation(id: string): Promise<ConversationWithMessa
     where: { conversationId: id },
     orderBy: { createdAt: 'asc' },
   });
-  const jobIds = messages
-    .map((m) => m.relatedJobId)
-    .filter((id): id is string => id !== null);
-  const jobRows = jobIds.length
-    ? await prisma.job.findMany({ where: { id: { in: jobIds } } })
-    : [];
+  const jobIds = messages.map((m) => m.relatedJobId).filter((id): id is string => id !== null);
+  const jobRows = jobIds.length ? await prisma.job.findMany({ where: { id: { in: jobIds } } }) : [];
   const jobs: Record<string, Job> = {};
   for (const j of jobRows) jobs[j.id] = j;
   return { conversation, deck, messages, jobs };
