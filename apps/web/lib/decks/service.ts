@@ -19,11 +19,14 @@ import { ConflictError, NotFoundError, ValidationError } from '@/lib/errors';
 import { initRepo, removeRepo } from '@/lib/git';
 import { generateUniqueSlug } from '@/lib/decks/slug';
 import { buildStarterFiles } from '@/lib/decks/scaffold';
+import { invalidateCachedBundle } from '@/lib/decks/bundle-cache';
 
 export interface CreateDeckInput {
   title: string;
   /** Optional explicit slug. If omitted, derived from the title. */
   slug?: string;
+  /** Optional brand-kit version to pin at creation time. */
+  brandKitVersionId?: string | null;
 }
 
 export interface ListDecksOptions {
@@ -68,6 +71,16 @@ export async function createDeck(input: CreateDeckInput, creator: User): Promise
   const collision = await prisma.deck.findUnique({ where: { slug }, select: { id: true } });
   if (collision) throw new ConflictError('Slug already in use', 'slug_taken');
 
+  // Validate the brand-kit version up front so we don't init a repo only to
+  // fail on the DB insert.
+  if (input.brandKitVersionId) {
+    const exists = await prisma.brandKitVersion.findUnique({
+      where: { id: input.brandKitVersionId },
+      select: { id: true },
+    });
+    if (!exists) throw new ValidationError('brandKitVersionId does not exist');
+  }
+
   const repoPath = deckRepoPath(slug);
   const { files } = buildStarterFiles({ title });
 
@@ -88,6 +101,7 @@ export async function createDeck(input: CreateDeckInput, creator: User): Promise
         repoPath,
         headCommitSha: commitSha,
         createdById: creator.id,
+        brandKitVersionId: input.brandKitVersionId ?? null,
       },
     });
   } catch (err) {
@@ -176,4 +190,40 @@ export async function softDeleteDeck(id: string): Promise<void> {
     where: { id: deck.id },
     data: { deletedAt: new Date() },
   });
+}
+
+/**
+ * Pin (or unpin) the brand-kit version a deck renders with. Drops the
+ * matching bundle cache entry so the next view rebuilds with the new CSS.
+ *
+ * Returns the deck unchanged when the binding already matches.
+ */
+export async function setDeckBrandKitVersion(
+  deckId: string,
+  brandKitVersionId: string | null,
+): Promise<Deck> {
+  const deck = await getDeckById(deckId);
+  if ((deck.brandKitVersionId ?? null) === (brandKitVersionId ?? null)) return deck;
+
+  if (brandKitVersionId) {
+    const exists = await prisma.brandKitVersion.findUnique({
+      where: { id: brandKitVersionId },
+      select: { id: true },
+    });
+    if (!exists)
+      throw new NotFoundError('Brand-kit version not found', 'brand_kit_version_not_found');
+  }
+
+  const updated = await prisma.deck.update({
+    where: { id: deck.id },
+    data: { brandKitVersionId: brandKitVersionId ?? null },
+  });
+
+  // Cache key includes the brand-kit version; invalidate the old entry for
+  // this commit so we don't keep serving the stale CSS injection.
+  if (deck.headCommitSha) {
+    await invalidateCachedBundle(deck.id, deck.headCommitSha, deck.brandKitVersionId ?? null);
+  }
+
+  return updated;
 }

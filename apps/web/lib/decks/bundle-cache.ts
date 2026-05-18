@@ -7,14 +7,17 @@
 // Bundles are content-addressed by commit SHA, so entries are immutable once
 // written. We set a long TTL (30 days) so cold decks naturally evict; a
 // re-request rebuilds in milliseconds.
+//
+// Phase 2.1b: cache key extended with the deck's bound brand-kit version so
+// re-pinning to a new kit/version doesn't serve stale CSS. Bumped to v2.
 
 import { redis } from '@/lib/redis';
 
-const KEY_PREFIX = 'deck-bundle:v1';
+const KEY_PREFIX = 'deck-bundle:v2';
 const TTL_SECONDS = 60 * 60 * 24 * 30; // 30 days
 
-function key(deckId: string, commitSha: string): string {
-  return `${KEY_PREFIX}:${deckId}:${commitSha}`;
+function key(deckId: string, commitSha: string, brandKitVersionId: string | null): string {
+  return `${KEY_PREFIX}:${deckId}:${commitSha}:${brandKitVersionId ?? 'none'}`;
 }
 
 /** Ensure the lazy-connect ioredis client has an open socket. */
@@ -29,10 +32,14 @@ async function ensureReady(): Promise<boolean> {
   }
 }
 
-export async function getCachedBundle(deckId: string, commitSha: string): Promise<string | null> {
+export async function getCachedBundle(
+  deckId: string,
+  commitSha: string,
+  brandKitVersionId: string | null,
+): Promise<string | null> {
   if (!(await ensureReady())) return null;
   try {
-    return await redis.get(key(deckId, commitSha));
+    return await redis.get(key(deckId, commitSha, brandKitVersionId));
   } catch {
     return null;
   }
@@ -41,25 +48,29 @@ export async function getCachedBundle(deckId: string, commitSha: string): Promis
 export async function putCachedBundle(
   deckId: string,
   commitSha: string,
+  brandKitVersionId: string | null,
   html: string,
 ): Promise<void> {
   if (!(await ensureReady())) return;
   try {
-    await redis.set(key(deckId, commitSha), html, 'EX', TTL_SECONDS);
+    await redis.set(key(deckId, commitSha, brandKitVersionId), html, 'EX', TTL_SECONDS);
   } catch {
     // Cache failure should never break serving.
   }
 }
 
 /**
- * Drop a single (deck, commit) entry. Used on AI-edit accept (the old head
- * SHA is no longer reachable; eviction would happen via TTL anyway, but
- * dropping it eagerly keeps the cache footprint tight on chatty sessions).
+ * Drop a single (deck, commit, brandKitVersion) entry. Used on AI-edit
+ * accept (the old head SHA is no longer reachable) and on brand-kit re-pin.
  */
-export async function invalidateCachedBundle(deckId: string, commitSha: string): Promise<void> {
+export async function invalidateCachedBundle(
+  deckId: string,
+  commitSha: string,
+  brandKitVersionId: string | null,
+): Promise<void> {
   if (!(await ensureReady())) return;
   try {
-    await redis.del(key(deckId, commitSha));
+    await redis.del(key(deckId, commitSha, brandKitVersionId));
   } catch {
     // Same rationale as put: cache misses are recoverable.
   }

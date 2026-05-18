@@ -22,8 +22,11 @@
 //
 // Out of scope for Phase 1 (TODO per architecture §7):
 //   - Signed object-storage URLs for assets (will replace the inline route)
-//   - Brand-kit binding / theme override resolution
 //   - Working-branch preview bundling (separate path in the editor)
+//
+// Phase 2.1b: brand-kit token resolution lives in lib/decks/bundle-service.ts.
+// The bundler stays pure (no DB) — it receives a pre-resolved `brandKitCss`
+// block and injects it as the FIRST style so authored CSS can override.
 
 import { listFilesAtCommit, readFileAtCommit } from '@/lib/git';
 
@@ -48,6 +51,14 @@ export interface BundleInput {
    * URLs in authored content resolve against the deck's asset route.
    */
   slug: string;
+  /**
+   * Optional pre-resolved CSS block (typically `:root { --brand-color-*: ... }`)
+   * injected as the FIRST style. Resolved by `bundle-service.ts` from the
+   * deck's pinned `BrandKitVersion`. Omit for decks with no kit bound.
+   */
+  brandKitCss?: string;
+  /** Identifier surfaced in the injected style tag's `data-source` attr. */
+  brandKitLabel?: string;
 }
 
 const STYLES_DIR = 'styles/';
@@ -94,7 +105,7 @@ async function readOptional(
  * which are referenced as-is in Phase 1).
  */
 export async function bundleDeck(input: BundleInput): Promise<string> {
-  const { repoPath, commitSha, slug } = input;
+  const { repoPath, commitSha, slug, brandKitCss, brandKitLabel } = input;
 
   const fileList = await listFilesAtCommit(repoPath, commitSha);
   const present = new Set(fileList);
@@ -121,10 +132,14 @@ export async function bundleDeck(input: BundleInput): Promise<string> {
     );
   }
 
-  // Styles: global first, then per-slide CSS in manifest order, then anything
-  // else under styles/ in deterministic order. Per-slide CSS is optional per
-  // arch §7 ("styles/s7.css — per-slide styles (optional)").
+  // Styles: brand-kit tokens FIRST (so authored CSS can override), then
+  // global, then per-slide CSS in manifest order, then any remaining CSS
+  // under styles/ in deterministic order.
   const styleBlocks: string[] = [];
+  if (brandKitCss && brandKitCss.trim() !== '') {
+    const label = escapeHtml(brandKitLabel ?? 'brand-kit');
+    styleBlocks.push(`<style data-source="${label}">\n${brandKitCss}\n</style>`);
+  }
   const handledStyles = new Set<string>();
   const globalCss = await readOptional(repoPath, commitSha, GLOBAL_CSS, present);
   if (globalCss !== null) {

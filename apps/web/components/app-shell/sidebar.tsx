@@ -1,18 +1,19 @@
-"use client";
+'use client';
 
-import * as React from "react";
-import Link from "next/link";
-import Image from "next/image";
-import { usePathname } from "next/navigation";
-import { Cog, FolderKanban, Menu as MenuIcon, Users } from "lucide-react";
+import * as React from 'react';
+import Link from 'next/link';
+import Image from 'next/image';
+import { usePathname } from 'next/navigation';
+import { Cog, FolderKanban, Menu as MenuIcon, Palette, Users } from 'lucide-react';
 
-import { cn } from "@/lib/utils";
-import { Button } from "@/components/ui/button";
-import { ScrollArea } from "@/components/ui/scroll-area";
-import { Sheet, SheetContent, SheetTitle, SheetTrigger } from "@/components/ui/sheet";
+import { cn } from '@/lib/utils';
+import { Button } from '@/components/ui/button';
+import { ScrollArea } from '@/components/ui/scroll-area';
+import { Sheet, SheetContent, SheetTitle, SheetTrigger } from '@/components/ui/sheet';
 
 const SIDEBAR_ICONS = {
   decks: FolderKanban,
+  brandKits: Palette,
   users: Users,
   settings: Cog,
 } as const;
@@ -28,14 +29,17 @@ type SidebarSection = { title: string; links: SidebarLink[] };
 
 const SECTIONS: SidebarSection[] = [
   {
-    title: "Workspace",
-    links: [{ href: "/decks", label: "Decks", iconKey: "decks" }],
+    title: 'Workspace',
+    links: [
+      { href: '/decks', label: 'Decks', iconKey: 'decks' },
+      { href: '/brand-kits', label: 'Brand kits', iconKey: 'brandKits' },
+    ],
   },
   {
-    title: "Admin",
+    title: 'Admin',
     links: [
-      { href: "/users", label: "Users", iconKey: "users" },
-      { href: "/settings", label: "Settings", iconKey: "settings" },
+      { href: '/users', label: 'Users', iconKey: 'users' },
+      { href: '/settings', label: 'Settings', iconKey: 'settings' },
     ],
   },
 ];
@@ -56,35 +60,28 @@ function SidebarBrand() {
   );
 }
 
-function SidebarNav({
-  onNavigate,
-  className,
-}: {
-  onNavigate?: () => void;
-  className?: string;
-}) {
+function SidebarNav({ onNavigate, className }: { onNavigate?: () => void; className?: string }) {
   const pathname = usePathname();
   return (
-    <nav className={cn("p-3 text-sm", className)}>
+    <nav className={cn('p-3 text-sm', className)}>
       {SECTIONS.map((section) => (
         <div key={section.title} className="mb-5">
           <h3 className="text-eyebrow px-2 pb-2">{section.title}</h3>
           <ul className="space-y-0.5">
             {section.links.map((link) => {
               const Icon = SIDEBAR_ICONS[link.iconKey];
-              const active =
-                pathname === link.href || pathname?.startsWith(link.href + "/");
+              const active = pathname === link.href || pathname?.startsWith(link.href + '/');
               return (
                 <li key={link.href}>
                   <Link
                     href={link.href}
                     onClick={onNavigate}
-                    aria-current={active ? "page" : undefined}
+                    aria-current={active ? 'page' : undefined}
                     className={cn(
-                      "group relative flex items-center gap-2.5 rounded-md px-2 py-1.5 transition-colors",
+                      'group relative flex items-center gap-2.5 rounded-md px-2 py-1.5 transition-colors',
                       active
-                        ? "bg-sidebar-accent text-sidebar-accent-foreground font-medium"
-                        : "text-sidebar-foreground/80 hover:bg-sidebar-accent/60 hover:text-sidebar-accent-foreground",
+                        ? 'bg-sidebar-accent text-sidebar-accent-foreground font-medium'
+                        : 'text-sidebar-foreground/80 hover:bg-sidebar-accent/60 hover:text-sidebar-accent-foreground',
                     )}
                   >
                     {active ? (

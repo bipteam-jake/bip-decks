@@ -30,13 +30,15 @@ model User {
   deletedAt    DateTime? @map("deleted_at")
 
   sessions            Session[]
-  decksCreated        Deck[]           @relation("DeckCreator")
+  decksCreated        Deck[]            @relation("DeckCreator")
   comments            Comment[]
   votes               Vote[]
   shareLinksCreated   ShareLink[]
   deckVersionsCreated DeckVersion[]
   aiConversations     AIConversation[]
   jobsCreated         Job[]
+  brandKitsCreated    BrandKit[]        @relation("BrandKitCreator")
+  brandKitVersions    BrandKitVersion[] @relation("BrandKitVersionPublisher")
 
   @@map("users")
 }
@@ -81,8 +83,10 @@ model Deck {
   deletedAt          DateTime?      @map("deleted_at")
   editingUserId      String?        @map("editing_user_id") @db.Uuid
   editingHeartbeatAt DateTime?      @map("editing_heartbeat_at")
+  brandKitVersionId  String?        @map("brand_kit_version_id") @db.Uuid
 
   createdBy       User             @relation("DeckCreator", fields: [createdById], references: [id])
+  brandKitVersion BrandKitVersion? @relation(fields: [brandKitVersionId], references: [id], onDelete: SetNull)
   versions        DeckVersion[]
   comments        Comment[]
   shareLinks      ShareLink[]
@@ -91,6 +95,7 @@ model Deck {
 
   @@index([createdById])
   @@index([deletedAt])
+  @@index([brandKitVersionId])
   @@map("decks")
 }
 
@@ -306,4 +311,110 @@ enum MessageRole {
   USER
   ASSISTANT
   SYSTEM
+}
+
+// ---------------------------------------------------------------------------
+// Brand kits (Phase 2.1)
+//
+// A brand kit is a versioned package binding visual identity, structured
+// design tokens, voice rules, and reference materials together. Decks pin to
+// a specific `BrandKitVersion`; the bundler resolves tokens to CSS custom
+// properties at render time. See docs/bip-deck-platform-architecture.md §10.
+//
+// Storage model:
+//   - `tokens` and `voice` are structured JSON validated by Zod in
+//     apps/web/lib/brand-kits/tokens.ts. The Postgres column is jsonb so we
+//     can index later if needed (Phase 3+).
+//   - Identity assets and references are blobs stored in S3 (MinIO locally);
+//     only the `s3Key` plus metadata is persisted here.
+//   - Soft delete only on `BrandKit` (`archivedAt`). Versions are immutable
+//     once published; hard delete cascades from the kit.
+// ---------------------------------------------------------------------------
+
+model BrandKit {
+  id          String    @id @default(uuid()) @db.Uuid
+  slug        String    @unique
+  name        String
+  description String?
+  createdById String    @map("created_by_id") @db.Uuid
+  createdAt   DateTime  @default(now()) @map("created_at")
+  updatedAt   DateTime  @updatedAt @map("updated_at")
+  archivedAt  DateTime? @map("archived_at")
+
+  createdBy User              @relation("BrandKitCreator", fields: [createdById], references: [id])
+  versions  BrandKitVersion[]
+
+  @@index([createdById])
+  @@index([archivedAt])
+  @@map("brand_kits")
+}
+
+model BrandKitVersion {
+  id            String   @id @default(uuid()) @db.Uuid
+  brandKitId    String   @map("brand_kit_id") @db.Uuid
+  versionLabel  String   @map("version_label")
+  tokens        Json
+  voice         Json
+  summary       String?
+  publishedById String   @map("published_by_id") @db.Uuid
+  publishedAt   DateTime @default(now()) @map("published_at")
+  createdAt     DateTime @default(now()) @map("created_at")
+
+  brandKit       BrandKit                @relation(fields: [brandKitId], references: [id], onDelete: Cascade)
+  publishedBy    User                    @relation("BrandKitVersionPublisher", fields: [publishedById], references: [id])
+  identityAssets BrandKitIdentityAsset[]
+  references     BrandKitReference[]
+  decks          Deck[]
+
+  @@unique([brandKitId, versionLabel])
+  @@index([brandKitId])
+  @@map("brand_kit_versions")
+}
+
+model BrandKitIdentityAsset {
+  id                String               @id @default(uuid()) @db.Uuid
+  brandKitVersionId String               @map("brand_kit_version_id") @db.Uuid
+  kind              BrandKitIdentityKind
+  s3Key             String               @map("s3_key")
+  mimeType          String               @map("mime_type")
+  width             Int?
+  height            Int?
+  sizeBytes         Int                  @map("size_bytes")
+  originalFilename  String               @map("original_filename")
+  createdAt         DateTime             @default(now()) @map("created_at")
+
+  brandKitVersion BrandKitVersion @relation(fields: [brandKitVersionId], references: [id], onDelete: Cascade)
+
+  @@index([brandKitVersionId])
+  @@map("brand_kit_identity_assets")
+}
+
+enum BrandKitIdentityKind {
+  LOGO_FULL_COLOR
+  LOGO_MONO
+  LOGO_LIGHT_BG
+  LOGO_DARK_BG
+  FAVICON
+}
+
+model BrandKitReference {
+  id                String                @id @default(uuid()) @db.Uuid
+  brandKitVersionId String                @map("brand_kit_version_id") @db.Uuid
+  kind              BrandKitReferenceKind
+  s3Key             String                @map("s3_key")
+  mimeType          String                @map("mime_type")
+  sizeBytes         Int                   @map("size_bytes")
+  originalFilename  String                @map("original_filename")
+  pageCount         Int?                  @map("page_count")
+  createdAt         DateTime              @default(now()) @map("created_at")
+
+  brandKitVersion BrandKitVersion @relation(fields: [brandKitVersionId], references: [id], onDelete: Cascade)
+
+  @@index([brandKitVersionId])
+  @@map("brand_kit_references")
+}
+
+enum BrandKitReferenceKind {
+  PDF
+  IMAGE
 }

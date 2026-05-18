@@ -15,12 +15,15 @@ import { createUser } from '@/lib/auth/service';
 import { createDeck } from '@/lib/decks/service';
 import { bundleDeck } from '@/lib/decks/bundler';
 import { getBundleBySlug, getBundleForDeck } from '@/lib/decks/bundle-service';
+import { createBrandKit, publishBrandKitVersion } from '@/lib/brand-kits/service';
+import { emptyTokens, emptyVoice } from '@/lib/brand-kits/tokens';
 import { NotFoundError } from '@/lib/errors';
 import { simpleGit } from 'simple-git';
 import type { User } from '@bip/db';
 
 const TEST_TAG = '+bundlevitest@bip.test';
 const TEST_SLUG_PREFIX = 'bn-';
+const TEST_KIT_SLUG_PREFIX = 'bn-kit-';
 
 function uniqueEmail(label: string): string {
   return `${label}.${Date.now()}.${Math.random().toString(36).slice(2, 8)}${TEST_TAG}`;
@@ -44,6 +47,7 @@ beforeAll(() => {
 
 afterEach(async () => {
   await prisma.deck.deleteMany({ where: { slug: { startsWith: TEST_SLUG_PREFIX } } });
+  await prisma.brandKit.deleteMany({ where: { slug: { startsWith: TEST_KIT_SLUG_PREFIX } } });
   await prisma.user.deleteMany({ where: { email: { endsWith: TEST_TAG } } });
 });
 
@@ -150,5 +154,50 @@ describe('getBundleBySlug', () => {
       data: { deletedAt: new Date() },
     });
     await expect(getBundleBySlug(deck.slug)).rejects.toBeInstanceOf(NotFoundError);
+  });
+});
+
+describe('bundleDeck brand-kit injection', () => {
+  it('injects no brand-kit style block when the deck has no kit bound', async () => {
+    const user = await makeUser();
+    const deck = await createDeck({ title: uniqueTitle('nokit') }, user);
+    const served = await getBundleForDeck(deck, deck.headCommitSha!, { bypassCache: true });
+    expect(served.html).not.toContain('data-source="brand-kit:');
+    expect(served.html).not.toContain('--brand-color-');
+  });
+
+  it('injects resolved brand tokens as the first style block when a kit is bound', async () => {
+    const user = await makeUser();
+    const deck = await createDeck({ title: uniqueTitle('withkit') }, user);
+    const kit = await createBrandKit(
+      {
+        name: `${TEST_KIT_SLUG_PREFIX}brand-${Date.now()}`,
+        slug: `${TEST_KIT_SLUG_PREFIX}brand-${Date.now()}-${Math.random().toString(36).slice(2, 6)}`,
+      },
+      user,
+    );
+    const tokens = emptyTokens();
+    tokens.colors.primary = '#0f1140';
+    tokens.colors.accent = '#46bcdf';
+    tokens.type.fontFamilies.display = 'Barlow, sans-serif';
+    const version = await publishBrandKitVersion(
+      { brandKitId: kit.id, versionLabel: 'v1', tokens, voice: emptyVoice() },
+      user,
+    );
+    await prisma.deck.update({ where: { id: deck.id }, data: { brandKitVersionId: version.id } });
+    const reloaded = await prisma.deck.findUniqueOrThrow({ where: { id: deck.id } });
+
+    const served = await getBundleForDeck(reloaded, reloaded.headCommitSha!, {
+      bypassCache: true,
+    });
+
+    expect(served.html).toContain('--brand-color-primary: #0f1140;');
+    expect(served.html).toContain('--brand-color-accent: #46bcdf;');
+    expect(served.html).toContain('--brand-type-family-display: Barlow, sans-serif;');
+    // Injected before global.css so authored CSS can override.
+    const kitIdx = served.html.indexOf('data-source="brand-kit:');
+    const globalIdx = served.html.indexOf('data-source="styles/global.css"');
+    expect(kitIdx).toBeGreaterThan(-1);
+    expect(globalIdx).toBeGreaterThan(kitIdx);
   });
 });

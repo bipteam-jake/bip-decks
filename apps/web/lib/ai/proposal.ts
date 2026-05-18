@@ -280,7 +280,7 @@ export async function acceptProposal(input: AcceptProposalInput): Promise<Accept
       // safe delete should succeed; fall back to force if git refuses.
       deleteBranch(deck.repoPath, job.workingBranch!, { force: true }),
     );
-    if (oldHead) await invalidateCachedBundle(deck.id, oldHead);
+    if (oldHead) await invalidateCachedBundle(deck.id, oldHead, deck.brandKitVersionId ?? null);
 
     const updated = await prisma.job.update({
       where: { id: job.id },

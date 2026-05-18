@@ -19,6 +19,7 @@ import { Separator } from '@/components/ui/separator';
 
 import { DeckActions } from './deck-actions';
 import { RenameDeck } from './rename-deck';
+import { DeckBrandKitRow } from '../_components/deck-brand-kit-row';
 
 interface Props {
   id: string;
@@ -26,9 +27,17 @@ interface Props {
   createdAt: string;
   updatedAt: string;
   archived: boolean;
+  brandKitVersionId: string | null;
 }
 
-export function DeckDetailsDialog({ id, title, createdAt, updatedAt, archived }: Props) {
+export function DeckDetailsDialog({
+  id,
+  title,
+  createdAt,
+  updatedAt,
+  archived,
+  brandKitVersionId,
+}: Props) {
   const [open, setOpen] = useState(false);
 
   return (
@@ -52,6 +61,9 @@ export function DeckDetailsDialog({ id, title, createdAt, updatedAt, archived }:
           </Row>
           <Row label="Updated">
             <span className="text-xs text-muted-foreground">{updatedAt}</span>
+          </Row>
+          <Row label="Brand kit">
+            <DeckBrandKitRow deckId={id} initialBrandKitVersionId={brandKitVersionId} />
           </Row>
           <Separator />
           <DeckActions id={id} archived={archived} />

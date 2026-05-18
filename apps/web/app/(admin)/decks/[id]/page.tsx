@@ -84,6 +84,7 @@ export default async function DeckDetailPage({ params }: { params: Promise<{ id:
             createdAt={deck.createdAt.toISOString().slice(0, 10)}
             updatedAt={deck.updatedAt.toISOString().slice(0, 10)}
             archived={Boolean(deck.archivedAt)}
+            brandKitVersionId={deck.brandKitVersionId}
           />
         }
       />
