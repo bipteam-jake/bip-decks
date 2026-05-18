@@ -151,3 +151,114 @@ export async function listFilesAtCommit(absPath: string, commitSha: string): Pro
 export async function removeRepo(absPath: string): Promise<void> {
   await fs.rm(absPath, { recursive: true, force: true });
 }
+
+// ---------------------------------------------------------------------------
+// AI-editor working-branch ops (ai-editor.md §7)
+// ---------------------------------------------------------------------------
+
+export interface ProposalChange {
+  /** Repo-relative POSIX path. */
+  file: string;
+  operation: 'replace' | 'create';
+  content: string;
+}
+
+export interface CommitProposalInput {
+  absPath: string;
+  branchName: string;
+  /** Commit SHA to branch from (the deck's current head). */
+  baseCommitSha: string;
+  changes: ProposalChange[];
+  message: string;
+  author: GitIdentity;
+}
+
+export interface CommitProposalResult {
+  commitSha: string;
+}
+
+/**
+ * Create a fresh branch from baseCommitSha, write the proposed file
+ * changes, and commit them. Leaves the working tree on the new branch
+ * (callers don't depend on tree state — all reads use `git show {sha}:`).
+ *
+ * Validates replace vs. create existence against the base tree before
+ * touching disk, so a violation surfaces as a clean error rather than a
+ * partial commit. Path-shape rules (no .., no leading /, editable dirs)
+ * are enforced by the response parser; we re-check the absolute-path
+ * resolution here as defense in depth.
+ */
+export async function commitProposalOnBranch(
+  input: CommitProposalInput,
+): Promise<CommitProposalResult> {
+  const { absPath, branchName, baseCommitSha, changes, message, author } = input;
+  const git = client(absPath);
+
+  // Pre-flight: replace must exist in the base tree, create must not.
+  const baseFiles = new Set(await listFilesAtCommit(absPath, baseCommitSha));
+  for (const change of changes) {
+    if (change.operation === 'replace' && !baseFiles.has(change.file)) {
+      throw new Error(`proposal: replace target does not exist: ${change.file}`);
+    }
+    if (change.operation === 'create' && baseFiles.has(change.file)) {
+      throw new Error(`proposal: create target already exists: ${change.file}`);
+    }
+    // Defense in depth: ensure resolved path stays inside the repo.
+    const resolved = path.resolve(absPath, change.file);
+    if (!resolved.startsWith(path.resolve(absPath) + path.sep)) {
+      throw new Error(`proposal: path escapes repo: ${change.file}`);
+    }
+  }
+
+  await git.checkout(['-B', branchName, baseCommitSha]);
+
+  for (const change of changes) {
+    const target = path.join(absPath, change.file);
+    await fs.mkdir(path.dirname(target), { recursive: true });
+    await fs.writeFile(target, change.content, 'utf8');
+    await git.add(change.file);
+  }
+
+  await git.commit(message, undefined, {
+    '--author': `${author.name} <${author.email}>`,
+  });
+  const sha = (await git.revparse(['HEAD'])).trim();
+  return { commitSha: sha };
+}
+
+/**
+ * Fast-forward `main` to the tip of `branchName`. Throws if the merge isn't
+ * a fast-forward — that would indicate `main` moved underneath us, which
+ * the AI-editor lock from §9 is meant to prevent. Returns the new HEAD SHA.
+ */
+export async function fastForwardMain(absPath: string, branchName: string): Promise<string> {
+  const git = client(absPath);
+  await git.checkout('main');
+  await git.merge(['--ff-only', branchName]);
+  return (await git.revparse(['HEAD'])).trim();
+}
+
+/**
+ * Delete a branch. `force: true` uses -D (deletes even if the branch is
+ * ahead of main — needed for reject). Switches off the branch first if
+ * we're currently on it so the delete is allowed.
+ */
+export async function deleteBranch(
+  absPath: string,
+  branchName: string,
+  options: { force?: boolean } = {},
+): Promise<void> {
+  const git = client(absPath);
+  const current = (await git.revparse(['--abbrev-ref', 'HEAD'])).trim();
+  if (current === branchName) {
+    await git.checkout('main');
+  }
+  await git.branch([options.force ? '-D' : '-d', branchName]);
+}
+
+/** True if a local branch with the given name exists. */
+export async function branchExists(absPath: string, branchName: string): Promise<boolean> {
+  const git = client(absPath);
+  const list = await git.branchLocal();
+  return list.all.includes(branchName);
+}

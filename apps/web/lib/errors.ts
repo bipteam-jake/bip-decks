@@ -49,8 +49,8 @@ export class InvalidCredentialsError extends AppError {
 }
 
 export class ConflictError extends AppError {
-  constructor(message = 'Conflict', code = 'conflict') {
-    super(code, message, 409);
+  constructor(message = 'Conflict', code = 'conflict', details?: unknown) {
+    super(code, message, 409, details);
     this.name = 'ConflictError';
   }
 }

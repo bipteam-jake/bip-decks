@@ -4,21 +4,49 @@
 // Phase 1 gates this on an authenticated TEAM session — share-link gating
 // (phasing doc §1, "one magic-link share type") will replace this when it
 // lands. Until then there is no client-facing exposure.
+//
+// Per ai-editor.md §8 we also honor `?at_commit={sha}` for internal preview
+// (e.g. the AI proposal's diff iframe). Only callable by team users; the
+// share-link resolver will not surface this query parameter.
 
 import { NextResponse } from 'next/server';
 
-import { AppError } from '@/lib/errors';
+import { AppError, ValidationError } from '@/lib/errors';
 import { errorResponse } from '@/lib/api/responses';
 import { requireTeamUser } from '@/lib/auth/middleware';
-import { getBundleBySlug } from '@/lib/decks/bundle-service';
+import { getBundleBySlug, getBundleForDeck } from '@/lib/decks/bundle-service';
+import { getDeckBySlug } from '@/lib/decks/service';
 
 export const runtime = 'nodejs';
 export const dynamic = 'force-dynamic';
 
+const SHA_RE = /^[0-9a-f]{7,40}$/;
+
 export async function GET(request: Request, { params }: { params: { slug: string } }) {
   try {
     await requireTeamUser();
-    const { html, commitSha, cacheHit } = await getBundleBySlug(params.slug);
+
+    const url = new URL(request.url);
+    const atCommit = url.searchParams.get('at_commit');
+
+    let html: string;
+    let commitSha: string;
+    let cacheHit: boolean;
+    if (atCommit) {
+      if (!SHA_RE.test(atCommit)) {
+        throw new ValidationError('at_commit must be a hex commit sha');
+      }
+      const deck = await getDeckBySlug(params.slug);
+      const served = await getBundleForDeck(deck, atCommit);
+      html = served.html;
+      commitSha = served.commitSha;
+      cacheHit = served.cacheHit;
+    } else {
+      const served = await getBundleBySlug(params.slug);
+      html = served.html;
+      commitSha = served.commitSha;
+      cacheHit = served.cacheHit;
+    }
 
     // ETag = commit SHA: bundles are content-addressed, so a matching
     // If-None-Match means the client already has the exact bytes.

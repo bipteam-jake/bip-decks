@@ -1,25 +1,28 @@
 // AI conversation service. Routes are thin; this module owns the rules.
 //
-// Phase 1 scope per docs/bip-deck-platform-ai-editor.md §3 steps 1-3:
-//   1. Create AIConversation for a deck
-//   2. Post a user message: persist user msg -> assemble context -> call Claude
-//      -> parse response -> persist assistant msg (with model/tokens/cost).
+// Per docs/bip-deck-platform-ai-editor.md §3 the full turn:
+//   1. Create AIConversation for a deck.
+//   2. Post a user message: persist user msg -> auto-reject any pending
+//      proposal (§7) -> acquire lock (§9) -> assemble context -> call Claude
+//      -> parse response -> if changes: build proposal (job + branch + cache)
+//      -> persist assistant msg (with model/tokens/cost + relatedJobId).
 //   3. Retrieve conversation history.
-//
-// Out of scope for this session per the prompt:
-//   - Creating the git working branch (step 4 of §3) — if Claude returns
-//     changes, we just log them and persist the parsed structure.
-//   - Job rows — wired in the next session along with the branch.
 
-import type { AIConversation, AIMessage, Deck, Prisma, User } from '@bip/db';
+import type { AIConversation, AIMessage, Deck, Job, Prisma, User } from '@bip/db';
 
 import { prisma } from '@/lib/prisma';
 import { getDeckById } from '@/lib/decks/service';
-import { NotFoundError } from '@/lib/errors';
+import { ConflictError, NotFoundError } from '@/lib/errors';
 import { callClaude, type ClaudeMessage } from '@bip/ai-gateway';
 
 import { AI_EDITOR_SYSTEM_PROMPT } from './system-prompt';
 import { buildDeckStateBlock } from './context';
+import { acquireOrRefreshLock } from './lock';
+import {
+  autoRejectPendingForConversation,
+  buildProposal,
+  listPendingForConversation,
+} from './proposal';
 import {
   parseClaudeResponse,
   failureToUserMessage,
@@ -116,11 +119,21 @@ export interface PostMessageInput {
   currentSlideId?: string;
   /** Propagated through to the gateway for log correlation. */
   requestId?: string;
+  /**
+   * Per §7 "Iterating on the same proposal": if a pending proposal exists,
+   * the API rejects this call unless the client explicitly confirms it
+   * wants to supersede it. The UI surfaces the confirmation; the API does
+   * the rest.
+   */
+  supersedePending?: boolean;
 }
 
 export interface PostMessageResult {
   userMessage: AIMessage;
   assistantMessage: AIMessage;
+  job: Job | null;
+  /** Job ids that were auto-canceled because of `supersedePending`. */
+  supersededJobIds: string[];
 }
 
 /**
@@ -162,9 +175,31 @@ export async function postUserMessage(input: PostMessageInput): Promise<PostMess
     throw new NotFoundError('Deck has no committed content', 'deck_no_head');
   }
 
+  // 0. Edit-lock (§9). Throws ConflictError with details if another user
+  //    holds the lock; the UI surfaces the take-over affordance from that.
+  //    Refreshing the lock as a side effect serves as our heartbeat for
+  //    the API path, complementing the periodic client pings.
+  await acquireOrRefreshLock(deck.id, input.user.id);
+
+  // 0a. Pending-proposal check (§7 "Iterating"). If a pending proposal
+  //     exists and the caller didn't pass supersedePending, refuse with a
+  //     412 so the UI can confirm and retry. Otherwise auto-reject the
+  //     pending job(s) before kicking off this turn.
+  const pending = await listPendingForConversation(conversation.id);
+  let supersededJobIds: string[] = [];
+  if (pending.length > 0) {
+    if (!input.supersedePending) {
+      throw new ConflictError(
+        'A previous proposal is still pending review',
+        'pending_proposal',
+        { pendingJobIds: pending.map((p) => p.id) },
+      );
+    }
+    // Carry these out after we persist the user message — we need that
+    // message's id as the supersede marker (§7).
+  }
+
   // 1. Build deck state from the CURRENT head before we mutate anything.
-  //    If the deck changes mid-turn (acceptance of a parallel proposal) we
-  //    don't try to detect it in Phase 1 — the lock from §9 lands later.
   const { currentSlideId, text: deckState } = await buildDeckStateBlock({
     repoPath: deck.repoPath,
     commitSha: deck.headCommitSha,
@@ -185,6 +220,15 @@ export async function postUserMessage(input: PostMessageInput): Promise<PostMess
     },
   });
 
+  // 2a. Now that we have the message id, auto-reject any pending proposals
+  //     citing it as the supersede marker.
+  if (pending.length > 0) {
+    supersededJobIds = await autoRejectPendingForConversation({
+      conversationId: conversation.id,
+      supersedingMessageId: userMessage.id,
+    });
+  }
+
   // 3. Assemble the Claude messages array. Historical messages first, then
   //    the new user message with the deck_state block prepended.
   const history = buildHistory(messages);
@@ -201,6 +245,7 @@ export async function postUserMessage(input: PostMessageInput): Promise<PostMess
   let tokensIn: number | null = null;
   let tokensOut: number | null = null;
   let costCents: number | null = null;
+  let parsedResponse: AIEditResponse | null = null;
 
   try {
     const response = await callClaude(claudeMessages, AI_EDITOR_SYSTEM_PROMPT, {
@@ -213,32 +258,12 @@ export async function postUserMessage(input: PostMessageInput): Promise<PostMess
 
     const parseResult = parseClaudeResponse(response.content);
     if (parseResult.ok) {
+      parsedResponse = parseResult.value;
       assistantContent = {
         kind: 'assistant',
         raw: response.content,
         parsed: parseResult.value,
       };
-
-      // Per the session prompt: if the response includes changes, just log
-      // them. The git working branch is the next session's job.
-      if (parseResult.value.changes && parseResult.value.changes.length > 0) {
-        // eslint-disable-next-line no-console
-        console.log(
-          JSON.stringify({
-            scope: 'ai-editor',
-            event: 'changes_proposed_not_applied',
-            conversationId: conversation.id,
-            deckId: deck.id,
-            requestId: input.requestId ?? null,
-            count: parseResult.value.changes.length,
-            files: parseResult.value.changes.map((c) => ({
-              file: c.file,
-              operation: c.operation,
-              bytes: c.content.length,
-            })),
-          }),
-        );
-      }
     } else {
       assistantContent = {
         kind: 'assistant_error',
@@ -249,8 +274,7 @@ export async function postUserMessage(input: PostMessageInput): Promise<PostMess
     }
   } catch (err) {
     const message = (err as Error).message;
-    const isTimeout =
-      message.includes('aborted') || message.toLowerCase().includes('timeout');
+    const isTimeout = message.includes('aborted') || message.toLowerCase().includes('timeout');
     assistantContent = {
       kind: 'assistant_error',
       raw: '',
@@ -271,13 +295,13 @@ export async function postUserMessage(input: PostMessageInput): Promise<PostMess
     );
   }
 
-  const assistantMessage = await prisma.aIMessage.create({
+  // 5. Persist the assistant message. We need its id to link the Job
+  //    (Job.input.triggeringMessageId), so insert before building the
+  //    proposal, then update the row with relatedJobId once we have it.
+  let assistantMessage = await prisma.aIMessage.create({
     data: {
       conversationId: conversation.id,
       role: 'ASSISTANT',
-      // Cast through Prisma.InputJsonValue: our discriminated union has
-      // optional fields the strict InputJsonValue type doesn't model, but we
-      // own the shape and round-trip it ourselves.
       content: assistantContent as unknown as Prisma.InputJsonValue,
       model,
       tokensIn,
@@ -286,11 +310,49 @@ export async function postUserMessage(input: PostMessageInput): Promise<PostMess
     },
   });
 
+  // 6. If the parsed response contains changes, materialize them as a Job +
+  //    git working branch. On build failure we mutate the persisted
+  //    assistant row into an assistant_error so the UI shows the failure
+  //    inline (per §10 git-error row).
+  let job: Job | null = null;
+  if (parsedResponse && parsedResponse.changes && parsedResponse.changes.length > 0) {
+    try {
+      const result = await buildProposal({
+        deck,
+        user: input.user,
+        response: parsedResponse,
+        conversationId: conversation.id,
+        triggeringMessageId: assistantMessage.id,
+        requestId: input.requestId,
+      });
+      job = result.job;
+      assistantMessage = await prisma.aIMessage.update({
+        where: { id: assistantMessage.id },
+        data: { relatedJobId: job.id },
+      });
+    } catch (err) {
+      const message = (err as Error).message;
+      const failureContent: AssistantMessageContent = {
+        kind: 'assistant_error',
+        raw: typeof assistantContent === 'object' && 'raw' in assistantContent
+          ? assistantContent.raw
+          : '',
+        userMessage:
+          'I drafted a change but couldn’t prepare the preview. Try rephrasing or try again.',
+        error: { kind: 'gateway', message },
+      };
+      assistantMessage = await prisma.aIMessage.update({
+        where: { id: assistantMessage.id },
+        data: { content: failureContent as unknown as Prisma.InputJsonValue },
+      });
+    }
+  }
+
   // Touch the conversation so listings sort right.
   await prisma.aIConversation.update({
     where: { id: conversation.id },
     data: { updatedAt: new Date() },
   });
 
-  return { userMessage, assistantMessage };
+  return { userMessage, assistantMessage, job, supersededJobIds };
 }

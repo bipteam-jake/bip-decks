@@ -50,3 +50,20 @@ export async function putCachedBundle(
     // Cache failure should never break serving.
   }
 }
+
+/**
+ * Drop a single (deck, commit) entry. Used on AI-edit accept (the old head
+ * SHA is no longer reachable; eviction would happen via TTL anyway, but
+ * dropping it eagerly keeps the cache footprint tight on chatty sessions).
+ */
+export async function invalidateCachedBundle(
+  deckId: string,
+  commitSha: string,
+): Promise<void> {
+  if (!(await ensureReady())) return;
+  try {
+    await redis.del(key(deckId, commitSha));
+  } catch {
+    // Same rationale as put: cache misses are recoverable.
+  }
+}

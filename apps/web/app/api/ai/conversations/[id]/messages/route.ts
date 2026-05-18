@@ -25,6 +25,12 @@ export const maxDuration = 90;
 const bodySchema = z.object({
   text: z.string().min(1).max(8000),
   currentSlideId: z.string().min(1).max(100).optional(),
+  /**
+   * Acknowledge a pending proposal and auto-reject it (§7). Default false:
+   * the API returns 409 `pending_proposal` if a pending proposal exists,
+   * giving the UI a chance to confirm with the user.
+   */
+  supersedePending: z.boolean().optional(),
 });
 
 export async function POST(
@@ -43,6 +49,7 @@ export async function POST(
       user,
       text: parsed.data.text,
       currentSlideId: parsed.data.currentSlideId,
+      supersedePending: parsed.data.supersedePending,
       requestId,
     });
 
