@@ -13,6 +13,10 @@
 //
 // Out of scope for Phase 2.2:
 //   - Thumbnails (Playwright in Phase 3+; thumbnailS3Key stays nullable).
+//   - "Save current slide as pattern" UX — deferred to Phase 3. See
+//     docs/bip-deck-platform-phasing.md §4 item 10. Blocked on the slide
+//     sidebar / per-slide menu (no slide-level UI in Phase 1) and on
+//     Playwright thumbnails (also Phase 3).
 //   - Versioning beyond the BrandKitVersion scope. To "edit" a published
 //     pattern, save it again on a new kit version (or delete + re-create
 //     in the same draft version).

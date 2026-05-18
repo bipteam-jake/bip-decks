@@ -133,6 +133,7 @@ If the architecture doc says *what* and *why*, this doc says *when*.
 7. **Three viewer link types.** Public, email-gated, coded. Snapshot binding with git tags. Roll-forward flow with confirmation modal naming old and new versions.
 8. **Client portal.** Separate route group, magic-link auth, decks-shared-with-me list, per-deck view with comments and version history.
 9. **Analytics.** `view_events` table, event capture from deck runtime, basic per-deck and per-link dashboards (total views, unique viewers, average time, slide dwell heatmap, completion rate).
+10. **Pattern library — author capture (deferred from Phase 2.2b).** "Save current slide as pattern" affordance from the slide-level UI, and Playwright-rendered thumbnails for the admin gallery. Phase 2.2 shipped the data model, service, admin create dialog, and AI-prompt injection; the missing pieces both require infrastructure (a slide sidebar / per-slide menu, and Playwright in the worker) that arrive in Phase 3.
 
 ### Out of scope (explicitly)
 

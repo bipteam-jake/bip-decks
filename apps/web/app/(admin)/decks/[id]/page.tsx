@@ -11,6 +11,7 @@ import Link from 'next/link';
 import { Archive, ChevronLeft } from 'lucide-react';
 
 import { AppError } from '@/lib/errors';
+import { prisma } from '@/lib/prisma';
 import { getDeckById } from '@/lib/decks/service';
 import {
   getConversation,
@@ -44,6 +45,18 @@ export default async function DeckDetailPage({ params }: { params: Promise<{ id:
   let initial: ConversationWithMessages | null = null;
   if (conversations[0]) {
     initial = await getConversation(conversations[0].id);
+  }
+
+  // Resolve brand-kit id (parent of the bound version) so the pattern picker
+  // in the editor can call /api/brand-kits/{kitId}/versions/{versionId}/patterns
+  // without an extra client round trip.
+  let brandKitId: string | null = null;
+  if (deck.brandKitVersionId) {
+    const v = await prisma.brandKitVersion.findUnique({
+      where: { id: deck.brandKitVersionId },
+      select: { brandKitId: true },
+    });
+    brandKitId = v?.brandKitId ?? null;
   }
 
   return (
@@ -95,6 +108,8 @@ export default async function DeckDetailPage({ params }: { params: Promise<{ id:
           slug: deck.slug,
           title: deck.title,
           headCommitSha: deck.headCommitSha,
+          brandKitVersionId: deck.brandKitVersionId,
+          brandKitId,
         }}
         initialConversation={initial?.conversation ?? null}
         initialMessages={initial?.messages ?? []}

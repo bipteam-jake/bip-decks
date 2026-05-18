@@ -38,6 +38,7 @@ import { Card, CardContent } from '@/components/ui/card';
 import { Tabs, TabsList, TabsTrigger } from '@/components/ui/tabs';
 import { Textarea } from '@/components/ui/textarea';
 import { cn } from '@/lib/utils';
+import { PatternPickerButton } from './_components/pattern-picker-button';
 
 const CodeDiff = dynamic(() => import('./code-diff').then((m) => m.CodeDiff), {
   ssr: false,
@@ -76,6 +77,11 @@ interface DeckSummary {
   slug: string;
   title: string;
   headCommitSha: string | null;
+  /** Brand kit version bound to this deck (null = no kit). */
+  brandKitVersionId: string | null;
+  /** Parent brand kit id, resolved server-side so the picker can call the
+   *  nested REST route without a round trip. Null iff brandKitVersionId is null. */
+  brandKitId: string | null;
 }
 
 export interface DeckEditorProps {
@@ -411,6 +417,8 @@ export function DeckEditor(props: DeckEditorProps) {
             onCancelSupersede={() => setConfirmSupersede(false)}
             onSend={(supersede) => void send(input, supersede)}
             error={error}
+            brandKitId={props.deck.brandKitId}
+            brandKitVersionId={props.deck.brandKitVersionId}
           />
         </aside>
       ) : (
@@ -755,6 +763,8 @@ function Composer({
   onCancelSupersede,
   onSend,
   error,
+  brandKitId,
+  brandKitVersionId,
 }: {
   input: string;
   onInput: (v: string) => void;
@@ -764,12 +774,14 @@ function Composer({
   onCancelSupersede: () => void;
   onSend: (supersede: boolean) => void;
   error: string | null;
+  brandKitId: string | null;
+  brandKitVersionId: string | null;
 }) {
   return (
     <div className="border-t bg-card px-3 py-3">
       {/* Depth selector (Phase 1: chat only). Disabled placeholder for the
           Quick/Agentic depths that arrive in Phase 3 — muscle-memory only. */}
-      <div className="mb-2 flex items-center gap-2">
+      <div className="mb-2 flex flex-wrap items-center gap-2">
         <span className="text-eyebrow">Depth</span>
         <Badge
           variant="outline"
@@ -779,6 +791,14 @@ function Composer({
           Chat
           <ChevronRight className="h-3 w-3" />
         </Badge>
+        {brandKitId && brandKitVersionId && (
+          <PatternPickerButton
+            kitId={brandKitId}
+            versionId={brandKitVersionId}
+            disabled={disabled || sending}
+            onPick={(prompt) => onInput(prompt + input)}
+          />
+        )}
       </div>
 
       {error && (
