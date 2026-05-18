@@ -59,7 +59,9 @@ export async function createDeck(input: CreateDeckInput, creator: User): Promise
 
   const slug = input.slug?.trim() || (await generateUniqueSlug(title));
   if (!/^[a-z0-9]+(?:-[a-z0-9]+)*$/.test(slug)) {
-    throw new ValidationError('Slug must be lowercase, hyphen-separated, no leading/trailing hyphens');
+    throw new ValidationError(
+      'Slug must be lowercase, hyphen-separated, no leading/trailing hyphens',
+    );
   }
 
   // Re-check slug uniqueness in case the caller passed an explicit one.

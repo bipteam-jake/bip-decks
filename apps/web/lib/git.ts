@@ -88,6 +88,34 @@ export async function getHeadSha(absPath: string): Promise<string> {
 }
 
 /**
+ * Read a single file's contents at the given commit, without checking the
+ * commit out. Wraps `git show {sha}:{relPath}`. Throws if the path doesn't
+ * exist in that commit — callers that need optional reads should catch.
+ */
+export async function readFileAtCommit(
+  absPath: string,
+  commitSha: string,
+  relPath: string,
+): Promise<string> {
+  return client(absPath).show([`${commitSha}:${relPath}`]);
+}
+
+/**
+ * List every blob path in the tree at the given commit. Wraps
+ * `git ls-tree -r --name-only {sha}`. Returns POSIX-style relative paths.
+ */
+export async function listFilesAtCommit(
+  absPath: string,
+  commitSha: string,
+): Promise<string[]> {
+  const raw = await client(absPath).raw(['ls-tree', '-r', '--name-only', commitSha]);
+  return raw
+    .split('\n')
+    .map((line) => line.trim())
+    .filter((line) => line.length > 0);
+}
+
+/**
  * Recursively delete a repo directory. No-op if it doesn't exist. Intended
  * for the 30-day hard-delete cron from data-model §3.3 (not in Phase 1
  * deck CRUD, but exposed here so future code uses the same wrapper).

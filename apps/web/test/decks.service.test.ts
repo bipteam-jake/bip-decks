@@ -117,9 +117,9 @@ describe('createDeck', () => {
     const user = await makeUser();
     const a = await createDeck({ title: uniqueTitle('dup') }, user);
     await softDeleteDeck(a.id);
-    await expect(
-      createDeck({ title: 'New title', slug: a.slug }, user),
-    ).rejects.toBeInstanceOf(ConflictError);
+    await expect(createDeck({ title: 'New title', slug: a.slug }, user)).rejects.toBeInstanceOf(
+      ConflictError,
+    );
   });
 });
 
