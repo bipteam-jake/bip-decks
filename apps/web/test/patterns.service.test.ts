@@ -5,11 +5,7 @@ import { afterAll, afterEach, beforeAll, describe, expect, it } from 'vitest';
 
 import { prisma } from '@/lib/prisma';
 import { createUser } from '@/lib/auth/service';
-import {
-  createBrandKit,
-  emptyDraft,
-  publishBrandKitVersion,
-} from '@/lib/brand-kits/service';
+import { createBrandKit, emptyDraft, publishBrandKitVersion } from '@/lib/brand-kits/service';
 import {
   deletePattern,
   getPatternById,

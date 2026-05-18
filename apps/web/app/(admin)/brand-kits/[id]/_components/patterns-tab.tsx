@@ -65,10 +65,9 @@ export function PatternsTab({ kitId, versionId }: PatternsTabProps) {
   const refresh = useCallback(async () => {
     setLoading(true);
     try {
-      const res = await fetch(
-        `/api/brand-kits/${kitId}/versions/${versionId}/patterns`,
-        { cache: 'no-store' },
-      );
+      const res = await fetch(`/api/brand-kits/${kitId}/versions/${versionId}/patterns`, {
+        cache: 'no-store',
+      });
       if (!res.ok) throw new Error((await res.json()).error?.message ?? 'Failed to load');
       const body = (await res.json()) as { patterns: Pattern[] };
       setPatterns(body.patterns);
@@ -89,8 +88,8 @@ export function PatternsTab({ kitId, versionId }: PatternsTabProps) {
         <div>
           <h3 className="text-sm font-semibold">Pattern library</h3>
           <p className="text-xs text-muted-foreground">
-            Reusable on-brand slide layouts. Approved patterns are exposed to the
-            AI editor so it can request them by slug.
+            Reusable on-brand slide layouts. Approved patterns are exposed to the AI editor so it
+            can request them by slug.
           </p>
         </div>
         <Dialog open={createOpen} onOpenChange={setCreateOpen}>
@@ -221,7 +220,9 @@ function PatternCard({
         )}
         <div className="flex flex-wrap gap-2 text-xs text-muted-foreground">
           <Badge variant="outline">{pattern.category}</Badge>
-          <span>{paramCount} parameter{paramCount === 1 ? '' : 's'}</span>
+          <span>
+            {paramCount} parameter{paramCount === 1 ? '' : 's'}
+          </span>
         </div>
         <div className="flex flex-wrap gap-2 pt-1">
           <Button size="sm" variant="outline" disabled={busy} onClick={toggleApproved}>
@@ -237,9 +238,9 @@ function PatternCard({
               <DialogHeader>
                 <DialogTitle>Delete pattern?</DialogTitle>
                 <DialogDescription>
-                  This removes <span className="font-mono">{pattern.slug}</span> from the
-                  AI editor's pattern catalog. Existing slides that already used the
-                  pattern keep their inlined HTML.
+                  This removes <span className="font-mono">{pattern.slug}</span> from the AI
+                  editor's pattern catalog. Existing slides that already used the pattern keep their
+                  inlined HTML.
                 </DialogDescription>
               </DialogHeader>
               <DialogFooter>
@@ -305,22 +306,19 @@ function CreatePatternDialogContent({
     }
     setBusy(true);
     try {
-      const res = await fetch(
-        `/api/brand-kits/${kitId}/versions/${versionId}/patterns`,
-        {
-          method: 'POST',
-          headers: { 'content-type': 'application/json' },
-          body: JSON.stringify({
-            name,
-            description: description || undefined,
-            category,
-            htmlTemplate: html,
-            cssTemplate: css || undefined,
-            parameters,
-            approved,
-          }),
-        },
-      );
+      const res = await fetch(`/api/brand-kits/${kitId}/versions/${versionId}/patterns`, {
+        method: 'POST',
+        headers: { 'content-type': 'application/json' },
+        body: JSON.stringify({
+          name,
+          description: description || undefined,
+          category,
+          htmlTemplate: html,
+          cssTemplate: css || undefined,
+          parameters,
+          approved,
+        }),
+      });
       if (!res.ok) {
         const body = (await res.json().catch(() => ({}))) as {
           error?: { message?: string };
@@ -342,9 +340,8 @@ function CreatePatternDialogContent({
         <DialogTitle>New pattern</DialogTitle>
         <DialogDescription>
           Describe a reusable on-brand slide layout. Use{' '}
-          <code className="font-mono text-xs">{'{{param-name}}'}</code> placeholders
-          in the HTML/CSS — they will be substituted with caller values when the
-          pattern is instantiated.
+          <code className="font-mono text-xs">{'{{param-name}}'}</code> placeholders in the HTML/CSS
+          — they will be substituted with caller values when the pattern is instantiated.
         </DialogDescription>
       </DialogHeader>
       <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
@@ -408,7 +405,8 @@ function CreatePatternDialogContent({
           onChange={(e) => setParametersJson(e.target.value)}
         />
         <p className="text-xs text-muted-foreground">
-          Each item: <code className="font-mono">{'{ name, type, required?, default?, description? }'}</code>.
+          Each item:{' '}
+          <code className="font-mono">{'{ name, type, required?, default?, description? }'}</code>.
           Allowed types: string, number, boolean, color, image-url.
         </p>
       </div>

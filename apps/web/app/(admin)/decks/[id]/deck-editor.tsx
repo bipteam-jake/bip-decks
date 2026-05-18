@@ -42,9 +42,7 @@ import { PatternPickerButton } from './_components/pattern-picker-button';
 
 const CodeDiff = dynamic(() => import('./code-diff').then((m) => m.CodeDiff), {
   ssr: false,
-  loading: () => (
-    <div className="p-4 text-xs text-muted-foreground">Loading diff…</div>
-  ),
+  loading: () => <div className="p-4 text-xs text-muted-foreground">Loading diff…</div>,
 });
 
 const CHAT_OPEN_KEY = 'bip.deck-editor.chat-open';
@@ -432,9 +430,7 @@ export function DeckEditor(props: DeckEditorProps) {
             <Sparkles className="h-4 w-4 text-primary" />
             <ChevronRight className="h-4 w-4" />
           </span>
-          <span
-            className="text-eyebrow whitespace-nowrap lg:[writing-mode:vertical-rl]"
-          >
+          <span className="text-eyebrow whitespace-nowrap lg:[writing-mode:vertical-rl]">
             AI Editor
           </span>
           <ChevronRight className="hidden h-4 w-4 opacity-0 lg:block" aria-hidden />
@@ -516,8 +512,12 @@ function ProposalPreview({
         </div>
         <Tabs value={tab} onValueChange={(v) => setTab(v as 'visual' | 'code')}>
           <TabsList className="h-8">
-            <TabsTrigger value="visual" className="text-xs">Visual</TabsTrigger>
-            <TabsTrigger value="code" className="text-xs">Code</TabsTrigger>
+            <TabsTrigger value="visual" className="text-xs">
+              Visual
+            </TabsTrigger>
+            <TabsTrigger value="code" className="text-xs">
+              Code
+            </TabsTrigger>
           </TabsList>
         </Tabs>
       </div>
@@ -824,12 +824,7 @@ function Composer({
             >
               Discard & send
             </Button>
-            <Button
-              type="button"
-              size="sm"
-              variant="outline"
-              onClick={onCancelSupersede}
-            >
+            <Button type="button" size="sm" variant="outline" onClick={onCancelSupersede}>
               Cancel
             </Button>
           </div>
@@ -854,9 +849,7 @@ function Composer({
           }}
           rows={3}
           disabled={disabled || sending}
-          placeholder={
-            disabled ? 'Editor locked by another user' : 'Ask Claude to change a slide…'
-          }
+          placeholder={disabled ? 'Editor locked by another user' : 'Ask Claude to change a slide…'}
           className="resize-none"
         />
         <div className="mt-2 flex items-center justify-between gap-2">

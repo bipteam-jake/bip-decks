@@ -140,8 +140,7 @@ function EmptyVersionNotice({ resource }: { resource: string }) {
 // Tokens
 // ---------------------------------------------------------------------------
 
-const COLOR_PATTERN =
-  /^#[0-9a-fA-F]{3,8}$|^rgba?\(|^hsla?\(|^oklch\(|^var\(/;
+const COLOR_PATTERN = /^#[0-9a-fA-F]{3,8}$|^rgba?\(|^hsla?\(|^oklch\(|^var\(/;
 const KEY_PATTERN = /^[a-z0-9-]+$/;
 
 export function TokensEditor({
@@ -198,9 +197,7 @@ export function TokensEditor({
                 entries={tokens.type.scale}
                 placeholderKey="md"
                 placeholderValue="1rem"
-                onChange={(next) =>
-                  onChange({ ...tokens, type: { ...tokens.type, scale: next } })
-                }
+                onChange={(next) => onChange({ ...tokens, type: { ...tokens.type, scale: next } })}
               />
             </CardContent>
           </Card>
@@ -360,9 +357,7 @@ function ColorRows({
                 >
                   <Trash2 className="h-4 w-4" />
                 </Button>
-                {err ? (
-                  <p className="basis-full text-xs text-destructive">{err}</p>
-                ) : null}
+                {err ? <p className="basis-full text-xs text-destructive">{err}</p> : null}
               </li>
             );
           })}
@@ -408,13 +403,7 @@ function ColorRows({
  * (e.g. `rgba(...)`, `var(--x)`); clicking still does nothing in that case
  * but the text Input next door is editable.
  */
-function ColorSwatchInput({
-  value,
-  onChange,
-}: {
-  value: string;
-  onChange: (v: string) => void;
-}) {
+function ColorSwatchInput({ value, onChange }: { value: string; onChange: (v: string) => void }) {
   const pickable = isPickableHex(value);
   // The native picker only understands `#rrggbb`; strip alpha when present.
   const pickerValue = pickable ? value.slice(0, 7) : '#000000';
@@ -553,8 +542,8 @@ function FontFamilyRows({
         </Button>
       </div>
       <p className="text-[10px] text-muted-foreground">
-        Fonts come from a curated Google Fonts list. Picked families are
-        auto-loaded into every deck using this kit.
+        Fonts come from a curated Google Fonts list. Picked families are auto-loaded into every deck
+        using this kit.
       </p>
     </div>
   );
@@ -630,9 +619,7 @@ function FontPicker({
                         {f.family}
                       </span>
                       <span className="flex items-center gap-1.5">
-                        <span className="text-[10px] text-muted-foreground">
-                          {f.fallback}
-                        </span>
+                        <span className="text-[10px] text-muted-foreground">{f.fallback}</span>
                         {selected ? <Check className="h-3.5 w-3.5 text-primary" /> : null}
                       </span>
                     </button>
@@ -764,9 +751,7 @@ function KeyValueRows({
                 >
                   <Trash2 className="h-4 w-4" />
                 </Button>
-                {err ? (
-                  <p className="basis-full text-xs text-destructive">{err}</p>
-                ) : null}
+                {err ? <p className="basis-full text-xs text-destructive">{err}</p> : null}
               </li>
             );
           })}
@@ -816,7 +801,11 @@ export function VoiceEditor({
 }) {
   const fields: Array<{ key: keyof BrandVoice; label: string; placeholder: string }> = [
     { key: 'tone', label: 'Tone', placeholder: 'Confident, friendly, direct.' },
-    { key: 'terminology', label: 'Terminology', placeholder: 'Preferred terms, capitalization, product names.' },
+    {
+      key: 'terminology',
+      label: 'Terminology',
+      placeholder: 'Preferred terms, capitalization, product names.',
+    },
     { key: 'dos', label: 'Do', placeholder: 'Use active voice. Lead with outcomes.' },
     { key: 'donts', label: "Don't", placeholder: 'No jargon. No hedging.' },
   ];
@@ -869,9 +858,7 @@ function IdentityTab({ kitId, versionId }: { kitId: string; versionId: string })
   useEffect(() => {
     let cancelled = false;
     (async () => {
-      const res = await fetch(
-        `/api/brand-kits/${kitId}/versions/${versionId}/identity`,
-      );
+      const res = await fetch(`/api/brand-kits/${kitId}/versions/${versionId}/identity`);
       if (!res.ok) {
         toast.error('Failed to load identity assets');
         return;
@@ -888,10 +875,10 @@ function IdentityTab({ kitId, versionId }: { kitId: string; versionId: string })
     const form = new FormData();
     form.set('kind', kind);
     form.set('file', file);
-    const res = await fetch(
-      `/api/brand-kits/${kitId}/versions/${versionId}/identity`,
-      { method: 'POST', body: form },
-    );
+    const res = await fetch(`/api/brand-kits/${kitId}/versions/${versionId}/identity`, {
+      method: 'POST',
+      body: form,
+    });
     const body = await res.json().catch(() => null);
     if (!res.ok) {
       toast.error(body?.error?.message ?? `Upload failed (${res.status})`);
@@ -1002,9 +989,7 @@ function ReferencesTab({ kitId, versionId }: { kitId: string; versionId: string 
   useEffect(() => {
     let cancelled = false;
     (async () => {
-      const res = await fetch(
-        `/api/brand-kits/${kitId}/versions/${versionId}/references`,
-      );
+      const res = await fetch(`/api/brand-kits/${kitId}/versions/${versionId}/references`);
       if (!res.ok) {
         toast.error('Failed to load references');
         return;
@@ -1022,10 +1007,10 @@ function ReferencesTab({ kitId, versionId }: { kitId: string; versionId: string 
     const form = new FormData();
     form.set('kind', isPdf ? 'PDF' : 'IMAGE');
     form.set('file', file);
-    const res = await fetch(
-      `/api/brand-kits/${kitId}/versions/${versionId}/references`,
-      { method: 'POST', body: form },
-    );
+    const res = await fetch(`/api/brand-kits/${kitId}/versions/${versionId}/references`, {
+      method: 'POST',
+      body: form,
+    });
     const body = await res.json().catch(() => null);
     if (!res.ok) {
       toast.error(body?.error?.message ?? `Upload failed (${res.status})`);
@@ -1051,11 +1036,7 @@ function ReferencesTab({ kitId, versionId }: { kitId: string; versionId: string 
           <CardTitle className="text-base">Upload reference</CardTitle>
         </CardHeader>
         <CardContent>
-          <FileUploader
-            label="PDF or image"
-            accept="application/pdf,image/*"
-            onPick={onUpload}
-          />
+          <FileUploader label="PDF or image" accept="application/pdf,image/*" onPick={onUpload} />
         </CardContent>
       </Card>
 
@@ -1087,12 +1068,7 @@ function ReferencesTab({ kitId, versionId }: { kitId: string; versionId: string 
                   {r.pageCount ? <span>{r.pageCount} pages</span> : null}
                 </div>
               </div>
-              <Button
-                size="sm"
-                variant="ghost"
-                onClick={() => onDelete(r.id)}
-                aria-label="Delete"
-              >
+              <Button size="sm" variant="ghost" onClick={() => onDelete(r.id)} aria-label="Delete">
                 <Trash2 className="h-4 w-4" />
               </Button>
             </li>
@@ -1153,13 +1129,7 @@ function FileUploader({
 // Versions
 // ---------------------------------------------------------------------------
 
-function VersionsTab({
-  kitId,
-  versions,
-}: {
-  kitId: string;
-  versions: VersionSummary[];
-}) {
+function VersionsTab({ kitId, versions }: { kitId: string; versions: VersionSummary[] }) {
   if (versions.length === 0) {
     return (
       <Card>
@@ -1264,8 +1234,8 @@ function PublishVersionDialog({
         <DialogHeader>
           <DialogTitle>Publish version</DialogTitle>
           <DialogDescription>
-            Snapshots the current tokens and voice into an immutable version. Existing decks
-            keep their pinned version until you re-bind them.
+            Snapshots the current tokens and voice into an immutable version. Existing decks keep
+            their pinned version until you re-bind them.
           </DialogDescription>
         </DialogHeader>
         <div className="space-y-3">

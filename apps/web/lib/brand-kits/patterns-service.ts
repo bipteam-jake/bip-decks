@@ -155,7 +155,8 @@ export async function savePattern(
       where: { brandKitVersionId_slug: { brandKitVersionId: input.brandKitVersionId, slug } },
       select: { id: true },
     });
-    if (taken) throw new ConflictError('Slug already in use for this version', 'pattern_slug_taken');
+    if (taken)
+      throw new ConflictError('Slug already in use for this version', 'pattern_slug_taken');
   }
 
   return prisma.brandKitPattern.create({
@@ -165,7 +166,10 @@ export async function savePattern(
       name,
       description: input.description?.trim() || null,
       category: (input.category?.trim() || 'general').toLowerCase().slice(0, 60),
-      tags: (input.tags ?? []).map((t) => t.trim()).filter(Boolean).slice(0, 20),
+      tags: (input.tags ?? [])
+        .map((t) => t.trim())
+        .filter(Boolean)
+        .slice(0, 20),
       htmlTemplate: html,
       cssTemplate: css,
       parameters: parameters as unknown as Prisma.InputJsonValue,
@@ -228,7 +232,10 @@ export async function updatePattern(
     data.category = (input.category.trim() || 'general').toLowerCase().slice(0, 60);
   }
   if (input.tags !== undefined) {
-    data.tags = input.tags.map((t) => t.trim()).filter(Boolean).slice(0, 20);
+    data.tags = input.tags
+      .map((t) => t.trim())
+      .filter(Boolean)
+      .slice(0, 20);
   }
   if (input.approved !== undefined) data.approved = input.approved;
   return prisma.brandKitPattern.update({ where: { id }, data });
@@ -293,9 +300,7 @@ export function instantiatePattern(input: InstantiatePatternInput): Instantiated
     return '';
   };
 
-  const html = input.pattern.htmlTemplate.replace(PLACEHOLDER_RE, (_, key: string) =>
-    resolve(key),
-  );
+  const html = input.pattern.htmlTemplate.replace(PLACEHOLDER_RE, (_, key: string) => resolve(key));
   const css =
     input.pattern.cssTemplate?.replace(PLACEHOLDER_RE, (_, key: string) => resolve(key)) ?? null;
 

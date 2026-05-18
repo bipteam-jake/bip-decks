@@ -112,8 +112,8 @@ export function PatternPickerButton(props: PatternPickerButtonProps) {
         <DialogHeader>
           <DialogTitle>Use a pattern</DialogTitle>
           <DialogDescription>
-            Approved on-brand slide layouts for this deck's brand kit. Picking
-            one prepends a prompt to your message; edit it before sending.
+            Approved on-brand slide layouts for this deck's brand kit. Picking one prepends a prompt
+            to your message; edit it before sending.
           </DialogDescription>
         </DialogHeader>
         {loading ? (

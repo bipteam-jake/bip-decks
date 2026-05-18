@@ -10,7 +10,7 @@
 
 Companion to the architecture doc. The architecture doc describes the system as designed in full; this doc describes the build sequence — what gets cut where, what each phase needs to do, and what stays out even when tempting.
 
-If the architecture doc says *what* and *why*, this doc says *when*.
+If the architecture doc says _what_ and _why_, this doc says _when_.
 
 ---
 

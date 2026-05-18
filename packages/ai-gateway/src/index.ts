@@ -231,7 +231,14 @@ export interface ExtractedBrandKit {
 
 export type ExtractBrandKitProgress =
   | { kind: 'status'; message: string }
-  | { kind: 'done'; result: ExtractedBrandKit; tokensIn: number; tokensOut: number; costCents: number; model: string }
+  | {
+      kind: 'done';
+      result: ExtractedBrandKit;
+      tokensIn: number;
+      tokensOut: number;
+      costCents: number;
+      model: string;
+    }
   | { kind: 'error'; message: string };
 
 export interface ExtractBrandKitInput {
