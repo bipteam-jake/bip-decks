@@ -92,6 +92,11 @@ export interface ConversationWithMessages {
   conversation: AIConversation;
   deck: Deck;
   messages: AIMessage[];
+  /**
+   * Map of jobId -> Job for every job referenced by a message.relatedJobId.
+   * Lets the UI render proposal cards without an extra round trip.
+   */
+  jobs: Record<string, Job>;
 }
 
 export async function getConversation(id: string): Promise<ConversationWithMessages> {
@@ -104,7 +109,26 @@ export async function getConversation(id: string): Promise<ConversationWithMessa
     where: { conversationId: id },
     orderBy: { createdAt: 'asc' },
   });
-  return { conversation, deck, messages };
+  const jobIds = messages
+    .map((m) => m.relatedJobId)
+    .filter((id): id is string => id !== null);
+  const jobRows = jobIds.length
+    ? await prisma.job.findMany({ where: { id: { in: jobIds } } })
+    : [];
+  const jobs: Record<string, Job> = {};
+  for (const j of jobRows) jobs[j.id] = j;
+  return { conversation, deck, messages, jobs };
+}
+
+/**
+ * List conversations for a deck, newest first. Used by the editor UI to
+ * pick up where the user left off across page reloads.
+ */
+export async function listConversationsForDeck(deckId: string): Promise<AIConversation[]> {
+  return prisma.aIConversation.findMany({
+    where: { deckId },
+    orderBy: { updatedAt: 'desc' },
+  });
 }
 
 // ---------------------------------------------------------------------------

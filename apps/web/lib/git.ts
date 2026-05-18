@@ -262,3 +262,16 @@ export async function branchExists(absPath: string, branchName: string): Promise
   const list = await git.branchLocal();
   return list.all.includes(branchName);
 }
+
+/**
+ * Unified diff between two commits, as the `git diff` text format that
+ * diff2html accepts directly. Used by the proposal-review UI's "Code"
+ * tab (§8). `--no-color` keeps ANSI escapes out of the output.
+ */
+export async function unifiedDiff(
+  absPath: string,
+  fromSha: string,
+  toSha: string,
+): Promise<string> {
+  return client(absPath).raw(['diff', '--no-color', '--unified=3', fromSha, toSha]);
+}

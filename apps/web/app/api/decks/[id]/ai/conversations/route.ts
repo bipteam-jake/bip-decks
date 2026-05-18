@@ -1,5 +1,7 @@
 // POST /api/decks/[id]/ai/conversations — create a new AIConversation.
 // Returns the conversation row (no messages yet).
+// GET  /api/decks/[id]/ai/conversations — list conversations for the deck,
+// newest first. Used by the editor UI to resume the most recent thread.
 
 import { NextResponse, type NextRequest } from 'next/server';
 import { z } from 'zod';
@@ -7,7 +9,7 @@ import { z } from 'zod';
 import { requireTeamUser } from '@/lib/auth/middleware';
 import { errorResponse } from '@/lib/api/responses';
 import { ValidationError } from '@/lib/errors';
-import { createConversation } from '@/lib/ai/service';
+import { createConversation, listConversationsForDeck } from '@/lib/ai/service';
 
 export const runtime = 'nodejs';
 export const dynamic = 'force-dynamic';
@@ -17,6 +19,19 @@ const bodySchema = z
     title: z.string().min(1).max(200).optional(),
   })
   .optional();
+
+export async function GET(
+  _req: NextRequest,
+  { params }: { params: { id: string } },
+): Promise<NextResponse> {
+  try {
+    await requireTeamUser();
+    const conversations = await listConversationsForDeck(params.id);
+    return NextResponse.json({ conversations });
+  } catch (err) {
+    return errorResponse(err);
+  }
+}
 
 export async function POST(
   req: NextRequest,

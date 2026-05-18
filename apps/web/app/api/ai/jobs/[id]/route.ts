@@ -1,11 +1,12 @@
-// GET /api/ai/conversations/[id] — fetch a conversation with its full
-// message history, oldest first. Returns { conversation, messages }.
+// GET /api/ai/jobs/[id] — fetch a single Job. Used by the editor UI to
+// re-hydrate proposal cards after navigation or to poll state transitions.
 
 import { NextResponse, type NextRequest } from 'next/server';
 
 import { requireTeamUser } from '@/lib/auth/middleware';
 import { errorResponse } from '@/lib/api/responses';
-import { getConversation } from '@/lib/ai/service';
+import { prisma } from '@/lib/prisma';
+import { NotFoundError } from '@/lib/errors';
 
 export const runtime = 'nodejs';
 export const dynamic = 'force-dynamic';
@@ -16,8 +17,9 @@ export async function GET(
 ): Promise<NextResponse> {
   try {
     await requireTeamUser();
-    const { conversation, messages, jobs } = await getConversation(params.id);
-    return NextResponse.json({ conversation, messages, jobs });
+    const job = await prisma.job.findUnique({ where: { id: params.id } });
+    if (!job) throw new NotFoundError('Job not found', 'job_not_found');
+    return NextResponse.json({ job });
   } catch (err) {
     return errorResponse(err);
   }
