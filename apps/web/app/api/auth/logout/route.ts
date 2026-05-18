@@ -8,9 +8,9 @@ export const dynamic = 'force-dynamic';
 
 export async function POST(): Promise<NextResponse> {
   try {
-    const raw = readSessionCookie();
+    const raw = await readSessionCookie();
     await logout(raw);
-    clearSessionCookie();
+    await clearSessionCookie();
     return NextResponse.json({ ok: true });
   } catch (err) {
     return errorResponse(err);

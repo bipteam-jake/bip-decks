@@ -1,3 +1,259 @@
-@tailwind base;
-@tailwind components;
-@tailwind utilities;
+@import "tailwindcss";
+
+@custom-variant dark (&:is(.dark *));
+
+/* BIP Brand Colors:
+   Oxford Blue (primary):  #0f1140
+   Sky Blue:               #46bcdf
+   Secondary Blue:         #00439b
+   Turquoise:              #51cfd7
+   Flax Yellow:            #eae392
+*/
+
+:root {
+  --background: #ffffff;
+  --foreground: #0f1140;
+  --card: #ffffff;
+  --card-foreground: #0f1140;
+  --popover: #ffffff;
+  --popover-foreground: #0f1140;
+  --primary: #0f1140;
+  --primary-foreground: #ffffff;
+  --secondary: #edf7fb;
+  --secondary-foreground: #0f1140;
+  --muted: #f1f5f9;
+  --muted-foreground: #5a6478;
+  --accent: #edf7fb;
+  --accent-foreground: #0f1140;
+  --destructive: #ef4444;
+  --destructive-foreground: #ffffff;
+  --destructive-subtle: rgb(239 68 68 / 0.12);
+  --success: #16a34a;
+  --success-foreground: #ffffff;
+  --success-subtle: rgb(22 163 74 / 0.12);
+  --warning: #f59e0b;
+  --warning-foreground: #422006;
+  --warning-subtle: rgb(245 158 11 / 0.15);
+  --info: #0ea5e9;
+  --info-foreground: #ffffff;
+  --info-subtle: rgb(14 165 233 / 0.12);
+  --border: #e2e8f0;
+  --input: #e2e8f0;
+  --ring: #46bcdf;
+  --chart-1: #46bcdf;
+  --chart-2: #00439b;
+  --chart-3: #51cfd7;
+  --chart-4: #eae392;
+  --chart-5: #0f1140;
+  --chart-6: #16a34a;
+  --chart-7: #f59e0b;
+  --chart-8: #a855f7;
+  --radius: 0.625rem;
+  --sidebar: #f8fafc;
+  --sidebar-foreground: #0f1140;
+  --sidebar-primary: #0f1140;
+  --sidebar-primary-foreground: #ffffff;
+  --sidebar-accent: #edf7fb;
+  --sidebar-accent-foreground: #0f1140;
+  --sidebar-border: #e2e8f0;
+  --sidebar-ring: #46bcdf;
+}
+
+.dark {
+  --background: #0f1140;
+  --foreground: #e8ecf4;
+  --card: #151752;
+  --card-foreground: #e8ecf4;
+  --popover: #151752;
+  --popover-foreground: #e8ecf4;
+  --primary: #46bcdf;
+  --primary-foreground: #0f1140;
+  --secondary: #1a1d5c;
+  --secondary-foreground: #e8ecf4;
+  --muted: #1a1d5c;
+  --muted-foreground: #94a3b8;
+  --accent: #1a1d5c;
+  --accent-foreground: #e8ecf4;
+  --destructive: #7f1d1d;
+  --destructive-foreground: #fca5a5;
+  --destructive-subtle: rgb(239 68 68 / 0.18);
+  --success: #22c55e;
+  --success-foreground: #052e16;
+  --success-subtle: rgb(34 197 94 / 0.18);
+  --warning: #fbbf24;
+  --warning-foreground: #422006;
+  --warning-subtle: rgb(251 191 36 / 0.2);
+  --info: #38bdf8;
+  --info-foreground: #082f49;
+  --info-subtle: rgb(56 189 248 / 0.18);
+  --border: #242868;
+  --input: #242868;
+  --ring: #46bcdf;
+  --chart-1: #46bcdf;
+  --chart-2: #51cfd7;
+  --chart-3: #eae392;
+  --chart-4: #00439b;
+  --chart-5: #63aee2;
+  --chart-6: #4ade80;
+  --chart-7: #fbbf24;
+  --chart-8: #c084fc;
+  --sidebar: #0a0c30;
+  --sidebar-foreground: #e8ecf4;
+  --sidebar-primary: #46bcdf;
+  --sidebar-primary-foreground: #e8ecf4;
+  --sidebar-accent: #151752;
+  --sidebar-accent-foreground: #e8ecf4;
+  --sidebar-border: #1a1d5c;
+  --sidebar-ring: #46bcdf;
+}
+
+@theme inline {
+  --color-background: var(--background);
+  --color-foreground: var(--foreground);
+  --color-card: var(--card);
+  --color-card-foreground: var(--card-foreground);
+  --color-popover: var(--popover);
+  --color-popover-foreground: var(--popover-foreground);
+  --color-primary: var(--primary);
+  --color-primary-foreground: var(--primary-foreground);
+  --color-secondary: var(--secondary);
+  --color-secondary-foreground: var(--secondary-foreground);
+  --color-muted: var(--muted);
+  --color-muted-foreground: var(--muted-foreground);
+  --color-accent: var(--accent);
+  --color-accent-foreground: var(--accent-foreground);
+  --color-destructive: var(--destructive);
+  --color-destructive-foreground: var(--destructive-foreground);
+  --color-destructive-subtle: var(--destructive-subtle);
+  --color-success: var(--success);
+  --color-success-foreground: var(--success-foreground);
+  --color-success-subtle: var(--success-subtle);
+  --color-warning: var(--warning);
+  --color-warning-foreground: var(--warning-foreground);
+  --color-warning-subtle: var(--warning-subtle);
+  --color-info: var(--info);
+  --color-info-foreground: var(--info-foreground);
+  --color-info-subtle: var(--info-subtle);
+  --color-border: var(--border);
+  --color-input: var(--input);
+  --color-ring: var(--ring);
+  --color-chart-1: var(--chart-1);
+  --color-chart-2: var(--chart-2);
+  --color-chart-3: var(--chart-3);
+  --color-chart-4: var(--chart-4);
+  --color-chart-5: var(--chart-5);
+  --color-chart-6: var(--chart-6);
+  --color-chart-7: var(--chart-7);
+  --color-chart-8: var(--chart-8);
+  --color-sidebar: var(--sidebar);
+  --color-sidebar-foreground: var(--sidebar-foreground);
+  --color-sidebar-primary: var(--sidebar-primary);
+  --color-sidebar-primary-foreground: var(--sidebar-primary-foreground);
+  --color-sidebar-accent: var(--sidebar-accent);
+  --color-sidebar-accent-foreground: var(--sidebar-accent-foreground);
+  --color-sidebar-border: var(--sidebar-border);
+  --color-sidebar-ring: var(--sidebar-ring);
+  --radius-lg: var(--radius);
+  --radius-md: calc(var(--radius) - 2px);
+  --radius-sm: calc(var(--radius) - 4px);
+  --radius-xl: calc(var(--radius) + 4px);
+  --font-sans: var(--font-barlow);
+  --font-mono: var(--font-geist-mono);
+}
+
+@layer base {
+  * {
+    @apply border-border;
+  }
+  body {
+    @apply bg-background text-foreground;
+  }
+}
+
+/* BD OPS wordmark — animated gradient shimmer */
+@keyframes bd-ops-shimmer {
+  0%   { background-position: 0% center; }
+  50%  { background-position: 100% center; }
+  100% { background-position: 0% center; }
+}
+
+@keyframes bd-ops-logo-glow {
+  0%   { filter: drop-shadow(0 0 0px #eae39200); }
+  25%  { filter: drop-shadow(0 0 8px #eae392cc); }
+  50%  { filter: drop-shadow(0 0 4px #46bcdfaa); }
+  75%  { filter: drop-shadow(0 0 8px #eae392cc); }
+  100% { filter: drop-shadow(0 0 0px #eae39200); }
+}
+
+.bd-ops-logo {
+  animation: bd-ops-logo-glow 4s ease-in-out infinite;
+}
+
+.bd-ops-text {
+  font-size: 1.25rem;
+  font-weight: 700;
+  letter-spacing: 0.2em;
+  text-transform: uppercase;
+  background: linear-gradient(
+    90deg,
+    #46bcdf 0%,
+    #51cfd7 20%,
+    #eae392 40%,
+    #51cfd7 60%,
+    #46bcdf 80%,
+    #51cfd7 100%
+  );
+  background-size: 300% auto;
+  -webkit-background-clip: text;
+  -webkit-text-fill-color: transparent;
+  background-clip: text;
+  animation: bd-ops-shimmer 4s ease-in-out infinite;
+}
+
+/* Trimmed: Tiptap editor, chat markdown, citation, FAB, shake/burst keyframes
+   from BD Ops are intentionally omitted here. Re-add only when needed. */
+
+/* ------------------------------------------------------------------ */
+/* Typography utilities                                                */
+/* ------------------------------------------------------------------ */
+@layer components {
+  .h1 {
+    @apply text-2xl font-semibold tracking-tight sm:text-3xl;
+  }
+  .h2 {
+    @apply text-xl font-semibold tracking-tight sm:text-2xl;
+  }
+  .h3 {
+    @apply text-lg font-semibold tracking-tight;
+  }
+  .h4 {
+    @apply text-base font-semibold;
+  }
+  .text-eyebrow {
+    @apply text-[11px] font-semibold uppercase tracking-wider text-muted-foreground;
+  }
+  .text-numeric {
+    font-variant-numeric: tabular-nums;
+  }
+}
+
+/* ------------------------------------------------------------------ */
+/* Form / focus polish                                                 */
+/* ------------------------------------------------------------------ */
+@layer base {
+  :focus-visible {
+    outline: none;
+  }
+  /* Hide the native browser caret on date/time inputs so our custom pickers
+     are the canonical control; keep readable text. */
+  input[type="date"]::-webkit-calendar-picker-indicator,
+  input[type="time"]::-webkit-calendar-picker-indicator {
+    cursor: pointer;
+    opacity: 0.6;
+  }
+  /* Tabular numerals for any element matching the .text-numeric pattern via class */
+  table {
+    font-variant-numeric: tabular-nums;
+  }
+}
+

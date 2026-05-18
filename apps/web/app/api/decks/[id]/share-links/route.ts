@@ -18,12 +18,13 @@ import { issueShareLink, listShareLinksForDeck } from '@/lib/share-links/service
 export const runtime = 'nodejs';
 export const dynamic = 'force-dynamic';
 
-type Ctx = { params: { id: string } };
+type Ctx = { params: Promise<{ id: string }> };
 
 export async function GET(_req: NextRequest, { params }: Ctx): Promise<NextResponse> {
   try {
+    const { id } = await params;
     await requireTeamUser();
-    const links = await listShareLinksForDeck(params.id);
+    const links = await listShareLinksForDeck(id);
     return NextResponse.json({ shareLinks: links });
   } catch (err) {
     return errorResponse(err);
@@ -39,6 +40,7 @@ const issueSchema = z.object({
 
 export async function POST(req: NextRequest, { params }: Ctx): Promise<NextResponse> {
   try {
+    const { id } = await params;
     const user = await requireTeamUser();
     const parsed = issueSchema.safeParse(await req.json().catch(() => null));
     if (!parsed.success) throw new ValidationError('Invalid request body', parsed.error.flatten());
@@ -49,7 +51,7 @@ export async function POST(req: NextRequest, { params }: Ctx): Promise<NextRespo
           ? null
           : new Date(parsed.data.expiresAt);
     const result = await issueShareLink({
-      deckId: params.id,
+      deckId: id,
       recipientEmail: parsed.data.recipientEmail,
       message: parsed.data.message,
       expiresAt,

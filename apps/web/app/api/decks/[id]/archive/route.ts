@@ -10,11 +10,12 @@ export const dynamic = 'force-dynamic';
 
 export async function POST(
   _req: NextRequest,
-  { params }: { params: { id: string } },
+  { params }: { params: Promise<{ id: string }> },
 ): Promise<NextResponse> {
   try {
+    const { id } = await params;
     await requireTeamUser();
-    const deck = await archiveDeck(params.id);
+    const deck = await archiveDeck(id);
     return NextResponse.json({ deck });
   } catch (err) {
     return errorResponse(err);

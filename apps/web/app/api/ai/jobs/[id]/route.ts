@@ -13,11 +13,12 @@ export const dynamic = 'force-dynamic';
 
 export async function GET(
   _req: NextRequest,
-  { params }: { params: { id: string } },
+  { params }: { params: Promise<{ id: string }> },
 ): Promise<NextResponse> {
   try {
+    const { id } = await params;
     await requireTeamUser();
-    const job = await prisma.job.findUnique({ where: { id: params.id } });
+    const job = await prisma.job.findUnique({ where: { id: id } });
     if (!job) throw new NotFoundError('Job not found', 'job_not_found');
     return NextResponse.json({ job });
   } catch (err) {

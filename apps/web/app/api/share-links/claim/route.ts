@@ -25,7 +25,7 @@ export async function POST(req: NextRequest): Promise<NextResponse> {
       throw new ValidationError('Invalid request body');
     }
     const { recipient, deck } = await claimShareLink(body);
-    setRecipientCookie({ deckId: deck.id, recipientId: recipient.id });
+    await setRecipientCookie({ deckId: deck.id, recipientId: recipient.id });
     return NextResponse.json({
       redirectTo: `/d/${encodeURIComponent(deck.slug)}`,
       recipient: {

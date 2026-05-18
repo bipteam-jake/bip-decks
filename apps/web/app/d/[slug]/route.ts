@@ -27,8 +27,9 @@ export const dynamic = 'force-dynamic';
 
 const SHA_RE = /^[0-9a-f]{7,40}$/;
 
-export async function GET(request: Request, { params }: { params: { slug: string } }) {
+export async function GET(request: Request, { params }: { params: Promise<{ slug: string }> }) {
   try {
+    const { slug } = await params;
     const url = new URL(request.url);
     const atCommit = url.searchParams.get('at_commit');
     const shareToken = url.searchParams.get('st');
@@ -40,7 +41,7 @@ export async function GET(request: Request, { params }: { params: { slug: string
     const isTeam = teamCtx !== null;
 
     // Resolve the deck up front so we can check cookies/tokens against it.
-    const deck = await getDeckBySlug(params.slug);
+    const deck = await getDeckBySlug(slug);
 
     // Team users skip the share-link gate entirely. For everyone else we
     // either accept the existing recipient cookie or, if a share token is
@@ -59,7 +60,7 @@ export async function GET(request: Request, { params }: { params: { slug: string
     }
 
     if (!isTeam) {
-      const recipientId = readRecipientCookie(deck.id);
+      const recipientId = await readRecipientCookie(deck.id);
       if (recipientId) {
         const recipient = await loadActiveRecipientForDeck(recipientId, deck.id);
         if (recipient) isAuthorized = true;
@@ -86,7 +87,7 @@ export async function GET(request: Request, { params }: { params: { slug: string
       cacheHit = served.cacheHit;
       deckId = served.deck.id;
     } else {
-      const served = await getBundleBySlug(params.slug);
+      const served = await getBundleBySlug(slug);
       html = served.html;
       commitSha = served.commitSha;
       cacheHit = served.cacheHit;

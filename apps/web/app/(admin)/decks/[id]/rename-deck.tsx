@@ -2,13 +2,15 @@
 
 import { useRouter } from 'next/navigation';
 import { useState } from 'react';
+import { toast } from 'sonner';
+
+import { Input } from '@/components/ui/input';
 
 export function RenameDeck({ id, initialTitle }: { id: string; initialTitle: string }) {
   const router = useRouter();
   const [editing, setEditing] = useState(false);
   const [title, setTitle] = useState(initialTitle);
   const [busy, setBusy] = useState(false);
-  const [error, setError] = useState<string | null>(null);
 
   async function save() {
     const next = title.trim();
@@ -18,7 +20,6 @@ export function RenameDeck({ id, initialTitle }: { id: string; initialTitle: str
       return;
     }
     setBusy(true);
-    setError(null);
     try {
       const res = await fetch(`/api/decks/${id}`, {
         method: 'PATCH',
@@ -27,7 +28,7 @@ export function RenameDeck({ id, initialTitle }: { id: string; initialTitle: str
       });
       if (!res.ok) {
         const body = await res.json().catch(() => null);
-        setError(body?.error?.message ?? `Rename failed (${res.status})`);
+        toast.error(body?.error?.message ?? `Rename failed (${res.status})`);
         return;
       }
       setEditing(false);
@@ -42,7 +43,7 @@ export function RenameDeck({ id, initialTitle }: { id: string; initialTitle: str
       <button
         type="button"
         onClick={() => setEditing(true)}
-        className="block w-full truncate text-left text-sm text-neutral-900 hover:underline"
+        className="block w-full truncate rounded-md px-2 py-1 text-left text-sm font-medium hover:bg-accent"
         title="Click to rename"
       >
         {initialTitle}
@@ -56,9 +57,8 @@ export function RenameDeck({ id, initialTitle }: { id: string; initialTitle: str
         e.preventDefault();
         void save();
       }}
-      className="flex flex-col gap-1"
     >
-      <input
+      <Input
         autoFocus
         value={title}
         onChange={(e) => setTitle(e.target.value)}
@@ -70,13 +70,8 @@ export function RenameDeck({ id, initialTitle }: { id: string; initialTitle: str
           }
         }}
         disabled={busy}
-        className="w-full rounded border border-neutral-300 px-2 py-1 text-sm focus:border-neutral-900 focus:outline-none"
+        className="h-8"
       />
-      {error && (
-        <span role="alert" className="text-xs text-red-700">
-          {error}
-        </span>
-      )}
     </form>
   );
 }

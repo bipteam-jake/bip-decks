@@ -15,7 +15,7 @@ import { updateCommentStatus } from '@/lib/comments/service';
 export const runtime = 'nodejs';
 export const dynamic = 'force-dynamic';
 
-type Ctx = { params: { id: string } };
+type Ctx = { params: Promise<{ id: string }> };
 
 const patchSchema = z
   .object({
@@ -29,12 +29,13 @@ const patchSchema = z
 
 export async function PATCH(req: NextRequest, { params }: Ctx): Promise<NextResponse> {
   try {
+    const { id } = await params;
     const viewer = await getCommentViewer();
     if (!viewer) throw new UnauthorizedError();
     const parsed = patchSchema.safeParse(await req.json().catch(() => null));
     if (!parsed.success) throw new ValidationError('Invalid request body', parsed.error.flatten());
     const comment = await updateCommentStatus({
-      commentId: params.id,
+      commentId: id,
       status: parsed.data.status,
       adminNote: parsed.data.adminNote,
       viewer,

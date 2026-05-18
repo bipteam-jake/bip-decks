@@ -20,14 +20,33 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { useRouter } from 'next/navigation';
 import dynamic from 'next/dynamic';
+import {
+  Check,
+  ChevronLeft,
+  ChevronRight,
+  ExternalLink,
+  Lock as LockIcon,
+  Send as SendIcon,
+  Sparkles,
+} from 'lucide-react';
 
 import type { AIConversation, AIMessage, Job } from '@bip/db';
 import { HEARTBEAT_INTERVAL_MS, type LockState } from '@/lib/ai/lock';
+import { Badge } from '@/components/ui/badge';
+import { Button } from '@/components/ui/button';
+import { Card, CardContent } from '@/components/ui/card';
+import { Tabs, TabsList, TabsTrigger } from '@/components/ui/tabs';
+import { Textarea } from '@/components/ui/textarea';
+import { cn } from '@/lib/utils';
 
 const CodeDiff = dynamic(() => import('./code-diff').then((m) => m.CodeDiff), {
   ssr: false,
-  loading: () => <div className="p-4 text-xs text-neutral-500">Loading diff…</div>,
+  loading: () => (
+    <div className="p-4 text-xs text-muted-foreground">Loading diff…</div>
+  ),
 });
+
+const CHAT_OPEN_KEY = 'bip.deck-editor.chat-open';
 
 // ---------------------------------------------------------------------------
 // Types mirroring service.ts message-content shape so we can render safely
@@ -318,47 +337,110 @@ export function DeckEditor(props: DeckEditorProps) {
 
   const locked = lock?.heldByOther && lock.ownerUserId !== props.currentUserId;
 
+  // Chat panel open/closed — persisted across reloads so the user's last
+  // preference sticks. Default open so first-time visitors discover the
+  // editor (and the Playwright smoke test finds the composer).
+  const [chatOpen, setChatOpen] = useState(true);
+  useEffect(() => {
+    try {
+      const stored = window.localStorage.getItem(CHAT_OPEN_KEY);
+      if (stored === '0') setChatOpen(false);
+    } catch {
+      /* ignore */
+    }
+  }, []);
+  const toggleChat = useCallback((next: boolean) => {
+    setChatOpen(next);
+    try {
+      window.localStorage.setItem(CHAT_OPEN_KEY, next ? '1' : '0');
+    } catch {
+      /* ignore */
+    }
+  }, []);
+
   return (
-    <div className="grid grid-cols-1 gap-4 lg:grid-cols-[1fr_28rem]">
+    <div
+      className={cn(
+        'grid grid-cols-1 gap-4',
+        chatOpen
+          ? 'lg:grid-cols-[22rem_1fr] xl:grid-cols-[26rem_1fr]'
+          : 'lg:grid-cols-[2.5rem_1fr]',
+      )}
+    >
+      {/* Chat panel — collapsible, on the LEFT of the deck. When closed it
+          collapses to a thin vertical rail that runs the full height of the
+          deck container, in-flow (not fixed). */}
+      {chatOpen ? (
+        <aside className="flex h-[calc(100vh-9rem)] min-h-[32rem] flex-col overflow-hidden rounded-lg border bg-card text-card-foreground shadow-sm lg:order-first">
+          <div className="flex items-center justify-between gap-2 border-b px-3 py-2">
+            <div className="flex items-center gap-2">
+              <Sparkles className="h-4 w-4 text-primary" />
+              <span className="text-eyebrow">AI Editor</span>
+            </div>
+            <div className="flex items-center gap-2">
+              {locked && <LockBadge lock={lock!} onTakeOver={() => void takeOverLock()} />}
+              <Button
+                type="button"
+                variant="ghost"
+                size="icon"
+                aria-label="Collapse chat"
+                onClick={() => toggleChat(false)}
+                className="h-7 w-7"
+              >
+                <ChevronLeft className="h-4 w-4" />
+              </Button>
+            </div>
+          </div>
+
+          <MessageList
+            messages={messages}
+            jobs={jobs}
+            pendingJobId={pending?.job.id ?? null}
+            accepting={accepting}
+            rejecting={rejecting}
+            onAccept={accept}
+            onReject={reject}
+          />
+
+          <Composer
+            input={input}
+            onInput={setInput}
+            sending={sending}
+            disabled={Boolean(locked)}
+            confirmSupersede={confirmSupersede}
+            onCancelSupersede={() => setConfirmSupersede(false)}
+            onSend={(supersede) => void send(input, supersede)}
+            error={error}
+          />
+        </aside>
+      ) : (
+        <button
+          type="button"
+          aria-label="Expand AI Editor"
+          onClick={() => toggleChat(true)}
+          className="group flex w-full items-center justify-center gap-2 overflow-hidden rounded-lg border bg-card py-2 text-muted-foreground shadow-sm transition-colors hover:bg-accent hover:text-foreground lg:order-first lg:h-[calc(100vh-9rem)] lg:min-h-[32rem] lg:flex-col lg:justify-between lg:py-3"
+        >
+          <span className="flex items-center gap-2 lg:flex-col">
+            <Sparkles className="h-4 w-4 text-primary" />
+            <ChevronRight className="h-4 w-4" />
+          </span>
+          <span
+            className="text-eyebrow whitespace-nowrap lg:[writing-mode:vertical-rl]"
+          >
+            AI Editor
+          </span>
+          <ChevronRight className="hidden h-4 w-4 opacity-0 lg:block" aria-hidden />
+        </button>
+      )}
+
       {/* Main area: proposal review when pending, otherwise current head preview */}
-      <section className="rounded border border-neutral-200 bg-white">
+      <section className="min-w-0">
         {pending ? (
           <ProposalPreview deckSlug={props.deck.slug} pending={pending} />
         ) : (
           <CurrentPreview deckSlug={props.deck.slug} headCommitSha={headCommitSha} />
         )}
       </section>
-
-      {/* Chat panel */}
-      <aside className="flex h-[calc(100vh-12rem)] flex-col rounded border border-neutral-200 bg-white">
-        <div className="flex items-center justify-between border-b border-neutral-200 px-3 py-2">
-          <span className="text-xs font-semibold uppercase tracking-wide text-neutral-600">
-            AI Editor
-          </span>
-          {locked && <LockBadge lock={lock!} onTakeOver={() => void takeOverLock()} />}
-        </div>
-
-        <MessageList
-          messages={messages}
-          jobs={jobs}
-          pendingJobId={pending?.job.id ?? null}
-          accepting={accepting}
-          rejecting={rejecting}
-          onAccept={accept}
-          onReject={reject}
-        />
-
-        <Composer
-          input={input}
-          onInput={setInput}
-          sending={sending}
-          disabled={Boolean(locked)}
-          confirmSupersede={confirmSupersede}
-          onCancelSupersede={() => setConfirmSupersede(false)}
-          onSend={(supersede) => void send(input, supersede)}
-          error={error}
-        />
-      </aside>
     </div>
   );
 }
@@ -375,17 +457,15 @@ function CurrentPreview({
   headCommitSha: string | null;
 }) {
   return (
-    <>
-      <div className="flex items-center justify-between border-b border-neutral-200 px-3 py-2 text-xs text-neutral-600">
-        <span className="font-medium">Preview</span>
-        <a
-          href={`/d/${deckSlug}`}
-          target="_blank"
-          rel="noreferrer"
-          className="underline hover:text-neutral-900"
-        >
-          Open in new tab
-        </a>
+    <Card className="overflow-hidden p-0">
+      <div className="flex items-center justify-between gap-2 border-b px-3 py-2">
+        <span className="text-eyebrow">Preview</span>
+        <Button asChild variant="ghost" size="sm" className="h-7 gap-1.5 text-xs">
+          <a href={`/d/${deckSlug}`} target="_blank" rel="noreferrer">
+            Open in new tab
+            <ExternalLink className="h-3.5 w-3.5" />
+          </a>
+        </Button>
       </div>
       <iframe
         // Both key and the query param change with the head sha: the key
@@ -395,9 +475,9 @@ function CurrentPreview({
         key={headCommitSha ?? 'empty'}
         src={`/d/${deckSlug}${headCommitSha ? `?v=${headCommitSha}` : ''}`}
         title="Deck preview"
-        className="h-[calc(100vh-15rem)] w-full rounded-b bg-white"
+        className="h-[calc(100vh-12rem)] min-h-[32rem] w-full bg-background"
       />
-    </>
+    </Card>
   );
 }
 
@@ -417,43 +497,33 @@ function ProposalPreview({
   const proposed = output?.proposedCommitSha;
 
   return (
-    <>
-      <div className="flex items-center justify-between border-b border-neutral-200 px-3 py-2 text-xs text-neutral-600">
-        <span className="font-medium">Proposed change · review</span>
-        <div className="flex gap-1">
-          <button
-            type="button"
-            onClick={() => setTab('visual')}
-            className={`rounded px-2 py-0.5 text-xs ${
-              tab === 'visual'
-                ? 'bg-neutral-900 text-white'
-                : 'text-neutral-700 hover:bg-neutral-100'
-            }`}
-          >
-            Visual
-          </button>
-          <button
-            type="button"
-            onClick={() => setTab('code')}
-            className={`rounded px-2 py-0.5 text-xs ${
-              tab === 'code' ? 'bg-neutral-900 text-white' : 'text-neutral-700 hover:bg-neutral-100'
-            }`}
-          >
-            Code
-          </button>
+    <Card className="overflow-hidden p-0">
+      <div className="flex flex-wrap items-center justify-between gap-2 border-b px-3 py-2">
+        <div className="flex items-center gap-2">
+          <Badge variant="secondary" className="gap-1">
+            <Sparkles className="h-3 w-3" />
+            Proposed change
+          </Badge>
+          <span className="text-xs text-muted-foreground">review before accepting</span>
         </div>
+        <Tabs value={tab} onValueChange={(v) => setTab(v as 'visual' | 'code')}>
+          <TabsList className="h-8">
+            <TabsTrigger value="visual" className="text-xs">Visual</TabsTrigger>
+            <TabsTrigger value="code" className="text-xs">Code</TabsTrigger>
+          </TabsList>
+        </Tabs>
       </div>
       {tab === 'visual' ? (
-        <div className="grid grid-cols-2 gap-px bg-neutral-200">
+        <div className="grid grid-cols-1 gap-px bg-border sm:grid-cols-2">
           <PreviewPane label="Before" sha={base ?? null} deckSlug={deckSlug} />
           <PreviewPane label="After" sha={proposed ?? null} deckSlug={deckSlug} />
         </div>
       ) : (
-        <div className="h-[calc(100vh-15rem)] overflow-auto bg-white">
+        <div className="h-[calc(100vh-12rem)] min-h-[32rem] overflow-auto bg-background">
           <CodeDiff jobId={pending.job.id} />
         </div>
       )}
-    </>
+    </Card>
   );
 }
 
@@ -467,20 +537,22 @@ function PreviewPane({
   deckSlug: string;
 }) {
   return (
-    <div className="flex flex-col bg-white">
-      <div className="flex items-center justify-between border-b border-neutral-200 px-2 py-1 text-[11px] text-neutral-600">
-        <span className="font-semibold uppercase tracking-wide">{label}</span>
-        <span className="font-mono text-neutral-500">{sha ? sha.slice(0, 7) : '—'}</span>
+    <div className="flex flex-col bg-card">
+      <div className="flex items-center justify-between border-b px-2 py-1.5">
+        <span className="text-eyebrow">{label}</span>
+        <span className="font-mono text-[11px] text-muted-foreground">
+          {sha ? sha.slice(0, 7) : '—'}
+        </span>
       </div>
       {sha ? (
         <iframe
           key={sha}
           src={`/d/${deckSlug}?at_commit=${sha}`}
           title={`${label} preview`}
-          className="h-[calc(100vh-16rem)] w-full bg-white"
+          className="h-[calc(100vh-13rem)] min-h-[28rem] w-full bg-background"
         />
       ) : (
-        <div className="flex h-[calc(100vh-16rem)] items-center justify-center text-xs text-neutral-500">
+        <div className="flex h-[calc(100vh-13rem)] min-h-[28rem] items-center justify-center text-xs text-muted-foreground">
           Missing commit
         </div>
       )}
@@ -517,8 +589,15 @@ function MessageList({
 
   if (messages.length === 0) {
     return (
-      <div className="flex flex-1 items-center justify-center px-6 text-center text-sm text-neutral-500">
-        Start a conversation to edit this deck with AI. Try “Tighten the headline on slide 1.”
+      <div className="flex flex-1 flex-col items-center justify-center gap-3 px-6 py-8 text-center">
+        <div className="flex h-10 w-10 items-center justify-center rounded-full bg-primary/10 text-primary">
+          <Sparkles className="h-5 w-5" />
+        </div>
+        <p className="text-sm text-muted-foreground">
+          Start a conversation to edit this deck with AI.
+          <br />
+          <span className="text-xs">Try “Tighten the headline on slide 1.”</span>
+        </p>
       </div>
     );
   }
@@ -568,7 +647,7 @@ function MessageRow({
   if (message.role === 'USER' && content.kind === 'user') {
     return (
       <div className="flex justify-end">
-        <div className="max-w-[85%] rounded-2xl rounded-br-sm bg-neutral-900 px-3 py-2 text-sm text-white">
+        <div className="max-w-[85%] rounded-2xl rounded-br-sm bg-primary px-3 py-2 text-sm text-primary-foreground whitespace-pre-wrap">
           {content.text}
         </div>
       </div>
@@ -577,7 +656,7 @@ function MessageRow({
   if (message.role === 'ASSISTANT' && content.kind === 'assistant') {
     return (
       <div className="space-y-2">
-        <div className="max-w-[90%] rounded-2xl rounded-bl-sm bg-neutral-100 px-3 py-2 text-sm text-neutral-900 whitespace-pre-wrap">
+        <div className="max-w-[90%] rounded-2xl rounded-bl-sm bg-muted px-3 py-2 text-sm text-foreground whitespace-pre-wrap">
           {content.parsed.explanation}
         </div>
         {job && (
@@ -595,7 +674,7 @@ function MessageRow({
   }
   if (message.role === 'ASSISTANT' && content.kind === 'assistant_error') {
     return (
-      <div className="max-w-[90%] rounded-2xl rounded-bl-sm border border-amber-300 bg-amber-50 px-3 py-2 text-sm text-amber-900">
+      <div className="max-w-[90%] rounded-2xl rounded-bl-sm border border-destructive/30 bg-destructive/10 px-3 py-2 text-sm text-destructive">
         {content.userMessage}
       </div>
     );
@@ -620,21 +699,22 @@ function ProposalActions({
 }) {
   if (job.status === 'DONE') {
     return (
-      <div className="rounded-md border border-emerald-300 bg-emerald-50 px-3 py-1.5 text-xs text-emerald-900">
+      <div className="inline-flex items-center gap-1.5 rounded-md border border-success/30 bg-success/10 px-3 py-1.5 text-xs font-medium text-success">
+        <Check className="h-3.5 w-3.5" />
         Accepted · deck updated
       </div>
     );
   }
   if (job.status === 'CANCELED') {
     return (
-      <div className="rounded-md border border-neutral-200 bg-neutral-50 px-3 py-1.5 text-xs text-neutral-600">
+      <div className="inline-flex items-center rounded-md border bg-muted/50 px-3 py-1.5 text-xs text-muted-foreground">
         Discarded
       </div>
     );
   }
   if (job.status === 'FAILED') {
     return (
-      <div className="rounded-md border border-red-300 bg-red-50 px-3 py-1.5 text-xs text-red-900">
+      <div className="inline-flex items-center rounded-md border border-destructive/30 bg-destructive/10 px-3 py-1.5 text-xs font-medium text-destructive">
         Failed to apply
       </div>
     );
@@ -642,22 +722,26 @@ function ProposalActions({
   if (!isPending) return null;
   return (
     <div className="flex gap-2">
-      <button
+      <Button
         type="button"
+        size="sm"
+        variant="success"
         onClick={onAccept}
         disabled={accepting || rejecting}
-        className="rounded-md bg-emerald-600 px-3 py-1.5 text-xs font-semibold text-white hover:bg-emerald-700 disabled:opacity-50"
+        loading={accepting}
       >
-        {accepting ? 'Accepting…' : 'Accept'}
-      </button>
-      <button
+        Accept
+      </Button>
+      <Button
         type="button"
+        size="sm"
+        variant="outline"
         onClick={onReject}
         disabled={accepting || rejecting}
-        className="rounded-md border border-neutral-300 px-3 py-1.5 text-xs font-semibold text-neutral-800 hover:bg-neutral-100 disabled:opacity-50"
+        loading={rejecting}
       >
-        {rejecting ? 'Rejecting…' : 'Reject'}
-      </button>
+        Reject
+      </Button>
     </div>
   );
 }
@@ -682,47 +766,52 @@ function Composer({
   error: string | null;
 }) {
   return (
-    <div className="border-t border-neutral-200 px-3 py-3">
-      {/* Depth selector (Phase 1: chat only). The dropdown is disabled with
-          a tooltip per §11 — muscle-memory groundwork for Phase 3. */}
-      <div className="mb-2 flex items-center gap-2 text-[11px] text-neutral-500">
-        <span>Depth:</span>
-        <select
-          disabled
+    <div className="border-t bg-card px-3 py-3">
+      {/* Depth selector (Phase 1: chat only). Disabled placeholder for the
+          Quick/Agentic depths that arrive in Phase 3 — muscle-memory only. */}
+      <div className="mb-2 flex items-center gap-2">
+        <span className="text-eyebrow">Depth</span>
+        <Badge
+          variant="outline"
           title="Quick and Agentic coming soon"
-          className="rounded border border-neutral-200 bg-neutral-50 px-2 py-0.5 text-xs disabled:cursor-not-allowed"
-          value="chat"
-          onChange={() => undefined}
+          className="cursor-not-allowed gap-1 font-normal text-muted-foreground"
         >
-          <option value="chat">Chat</option>
-        </select>
+          Chat
+          <ChevronRight className="h-3 w-3" />
+        </Badge>
       </div>
 
       {error && (
-        <div role="alert" className="mb-2 rounded bg-red-50 px-2 py-1 text-xs text-red-800">
+        <div
+          role="alert"
+          className="mb-2 rounded-md border border-destructive/30 bg-destructive/10 px-2 py-1.5 text-xs text-destructive"
+        >
           {error}
         </div>
       )}
 
       {confirmSupersede && (
-        <div className="mb-2 rounded border border-amber-300 bg-amber-50 px-2 py-2 text-xs text-amber-900">
+        <div className="mb-2 rounded-md border border-warning/30 bg-warning/10 px-2 py-2 text-xs text-warning">
           A previous proposal is still pending. Sending this message will discard it.
           <div className="mt-2 flex gap-2">
-            <button
+            <Button
               type="button"
+              size="sm"
+              variant="secondary"
               onClick={() => onSend(true)}
               disabled={sending}
-              className="rounded bg-amber-700 px-2 py-1 text-xs font-semibold text-white hover:bg-amber-800 disabled:opacity-50"
+              loading={sending}
             >
               Discard & send
-            </button>
-            <button
+            </Button>
+            <Button
               type="button"
+              size="sm"
+              variant="outline"
               onClick={onCancelSupersede}
-              className="rounded border border-amber-300 px-2 py-1 text-xs text-amber-900 hover:bg-amber-100"
             >
               Cancel
-            </button>
+            </Button>
           </div>
         </div>
       )}
@@ -733,7 +822,7 @@ function Composer({
           onSend(false);
         }}
       >
-        <textarea
+        <Textarea
           value={input}
           onChange={(e) => onInput(e.target.value)}
           onKeyDown={(e) => {
@@ -745,18 +834,22 @@ function Composer({
           }}
           rows={3}
           disabled={disabled || sending}
-          placeholder={disabled ? 'Editor locked by another user' : 'Ask Claude to change a slide…'}
-          className="w-full resize-none rounded border border-neutral-300 px-2 py-1.5 text-sm focus:border-neutral-900 focus:outline-none disabled:bg-neutral-50"
+          placeholder={
+            disabled ? 'Editor locked by another user' : 'Ask Claude to change a slide…'
+          }
+          className="resize-none"
         />
-        <div className="mt-1 flex items-center justify-between text-[11px] text-neutral-500">
-          <span>⌘/Ctrl + Enter to send</span>
-          <button
+        <div className="mt-2 flex items-center justify-between gap-2">
+          <span className="text-[11px] text-muted-foreground">⌘/Ctrl + Enter to send</span>
+          <Button
             type="submit"
+            size="sm"
             disabled={disabled || sending || !input.trim()}
-            className="rounded bg-neutral-900 px-3 py-1 text-xs font-semibold text-white hover:bg-neutral-800 disabled:opacity-50"
+            loading={sending}
+            leadingIcon={sending ? undefined : <SendIcon className="h-3.5 w-3.5" />}
           >
-            {sending ? 'Sending…' : 'Send'}
-          </button>
+            Send
+          </Button>
         </div>
       </form>
     </div>
@@ -766,15 +859,18 @@ function Composer({
 function LockBadge({ lock, onTakeOver }: { lock: LockState; onTakeOver: () => void }) {
   const age = lock.ageMs ? Math.round(lock.ageMs / 1000) : null;
   return (
-    <div className="flex items-center gap-2 rounded bg-amber-100 px-2 py-0.5 text-[11px] text-amber-900">
+    <div className="flex items-center gap-1.5 rounded-md border border-warning/30 bg-warning/10 px-2 py-0.5 text-[11px] text-warning">
+      <LockIcon className="h-3 w-3" />
       <span>Locked{age !== null ? ` · ${age}s ago` : ''}</span>
-      <button
+      <Button
         type="button"
+        size="sm"
+        variant="secondary"
         onClick={onTakeOver}
-        className="rounded bg-amber-700 px-1.5 py-0.5 text-[10px] font-semibold text-white hover:bg-amber-800"
+        className="h-5 px-1.5 text-[10px]"
       >
         Take over
-      </button>
+      </Button>
     </div>
   );
 }

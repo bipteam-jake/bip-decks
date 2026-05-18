@@ -47,7 +47,7 @@ export async function getCommentViewer(
   }
 
   if (opts.deckId) {
-    const recipientId = readRecipientCookie(opts.deckId);
+    const recipientId = await readRecipientCookie(opts.deckId);
     if (recipientId) {
       const recipient = await loadActiveRecipientForDeck(recipientId, opts.deckId);
       if (recipient) {

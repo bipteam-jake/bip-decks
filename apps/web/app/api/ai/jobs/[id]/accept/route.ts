@@ -12,11 +12,12 @@ export const dynamic = 'force-dynamic';
 
 export async function POST(
   _req: NextRequest,
-  { params }: { params: { id: string } },
+  { params }: { params: Promise<{ id: string }> },
 ): Promise<NextResponse> {
   try {
+    const { id } = await params;
     const user = await requireTeamUser();
-    const result = await acceptProposal({ jobId: params.id, user });
+    const result = await acceptProposal({ jobId: id, user });
     return NextResponse.json(result);
   } catch (err) {
     return errorResponse(err);

@@ -29,14 +29,14 @@ function baseOptions(): CookieOptions {
   };
 }
 
-export function setSessionCookie(rawToken: string): void {
-  cookies().set(SESSION_COOKIE_NAME, rawToken, baseOptions());
+export async function setSessionCookie(rawToken: string): Promise<void> {
+  (await cookies()).set(SESSION_COOKIE_NAME, rawToken, baseOptions());
 }
 
-export function clearSessionCookie(): void {
-  cookies().set(SESSION_COOKIE_NAME, '', { ...baseOptions(), maxAge: 0 });
+export async function clearSessionCookie(): Promise<void> {
+  (await cookies()).set(SESSION_COOKIE_NAME, '', { ...baseOptions(), maxAge: 0 });
 }
 
-export function readSessionCookie(): string | null {
-  return cookies().get(SESSION_COOKIE_NAME)?.value ?? null;
+export async function readSessionCookie(): Promise<string | null> {
+  return (await cookies()).get(SESSION_COOKIE_NAME)?.value ?? null;
 }

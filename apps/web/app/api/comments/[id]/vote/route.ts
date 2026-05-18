@@ -15,7 +15,7 @@ import { voteComment } from '@/lib/comments/service';
 export const runtime = 'nodejs';
 export const dynamic = 'force-dynamic';
 
-type Ctx = { params: { id: string } };
+type Ctx = { params: Promise<{ id: string }> };
 
 const voteSchema = z.object({
   direction: z.union([z.literal(1), z.literal(-1)]),
@@ -37,13 +37,14 @@ async function deckIdForComment(commentId: string): Promise<string> {
 
 export async function POST(req: NextRequest, { params }: Ctx): Promise<NextResponse> {
   try {
-    const deckId = await deckIdForComment(params.id);
+    const { id } = await params;
+    const deckId = await deckIdForComment(id);
     const viewer = await getCommentViewer({ deckId });
     if (!viewer) throw new UnauthorizedError();
     const parsed = voteSchema.safeParse(await req.json().catch(() => null));
     if (!parsed.success) throw new ValidationError('Invalid request body', parsed.error.flatten());
     const result = await voteComment({
-      commentId: params.id,
+      commentId: id,
       direction: parsed.data.direction,
       viewer,
     });
@@ -55,10 +56,11 @@ export async function POST(req: NextRequest, { params }: Ctx): Promise<NextRespo
 
 export async function DELETE(_req: NextRequest, { params }: Ctx): Promise<NextResponse> {
   try {
-    const deckId = await deckIdForComment(params.id);
+    const { id } = await params;
+    const deckId = await deckIdForComment(id);
     const viewer = await getCommentViewer({ deckId });
     if (!viewer) throw new UnauthorizedError();
-    const result = await voteComment({ commentId: params.id, direction: 0, viewer });
+    const result = await voteComment({ commentId: id, direction: 0, viewer });
     return NextResponse.json(result);
   } catch (err) {
     return errorResponse(err);

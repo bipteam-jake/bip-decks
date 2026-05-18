@@ -19,14 +19,15 @@ import { createComment, listComments } from '@/lib/comments/service';
 export const runtime = 'nodejs';
 export const dynamic = 'force-dynamic';
 
-type Ctx = { params: { id: string } };
+type Ctx = { params: Promise<{ id: string }> };
 
 export async function GET(req: NextRequest, { params }: Ctx): Promise<NextResponse> {
   try {
-    const viewer = await getCommentViewer({ deckId: params.id });
+    const { id } = await params;
+    const viewer = await getCommentViewer({ deckId: id });
     if (!viewer) throw new UnauthorizedError();
     const slideId = req.nextUrl.searchParams.get('slideId') ?? undefined;
-    const comments = await listComments({ deckId: params.id, slideId, viewer });
+    const comments = await listComments({ deckId: id, slideId, viewer });
     return NextResponse.json({ comments });
   } catch (err) {
     return errorResponse(err);
@@ -41,12 +42,13 @@ const createSchema = z.object({
 
 export async function POST(req: NextRequest, { params }: Ctx): Promise<NextResponse> {
   try {
-    const viewer = await getCommentViewer({ deckId: params.id });
+    const { id } = await params;
+    const viewer = await getCommentViewer({ deckId: id });
     if (!viewer) throw new UnauthorizedError();
     const parsed = createSchema.safeParse(await req.json().catch(() => null));
     if (!parsed.success) throw new ValidationError('Invalid request body', parsed.error.flatten());
     const comment = await createComment({
-      deckId: params.id,
+      deckId: id,
       slideId: parsed.data.slideId,
       body: parsed.data.body,
       parentId: parsed.data.parentId,

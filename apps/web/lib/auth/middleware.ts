@@ -14,13 +14,21 @@ import type { User } from '@bip/db';
  * extended the server-side expiry.
  */
 export async function getSessionContext(): Promise<SessionContext | null> {
-  const raw = readSessionCookie();
+  const raw = await readSessionCookie();
   if (!raw) return null;
   const ctx = await validateSessionToken(raw);
   if (!ctx) return null;
   if (ctx.refreshed) {
     // Re-issue the cookie so its client-side maxAge tracks the server expiry.
-    setSessionCookie(raw);
+    // Next 15 forbids cookies().set() from Server Components, so the refresh
+    // is best-effort: it succeeds in Route Handlers / Server Actions, and is
+    // silently skipped when called from a Server Component (e.g. the admin
+    // layout). The next mutating request will pick it up.
+    try {
+      await setSessionCookie(raw);
+    } catch {
+      // Server Component context — ignore.
+    }
   }
   return ctx;
 }

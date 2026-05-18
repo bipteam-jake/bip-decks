@@ -30,7 +30,7 @@ export async function POST(req: NextRequest): Promise<NextResponse> {
       null;
 
     const result = await login({ ...parsed.data, userAgent, ipAddress });
-    setSessionCookie(result.session.rawToken);
+    await setSessionCookie(result.session.rawToken);
 
     return NextResponse.json({
       user: {

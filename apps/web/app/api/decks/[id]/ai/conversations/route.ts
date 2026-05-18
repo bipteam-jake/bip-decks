@@ -22,11 +22,12 @@ const bodySchema = z
 
 export async function GET(
   _req: NextRequest,
-  { params }: { params: { id: string } },
+  { params }: { params: Promise<{ id: string }> },
 ): Promise<NextResponse> {
   try {
+    const { id } = await params;
     await requireTeamUser();
-    const conversations = await listConversationsForDeck(params.id);
+    const conversations = await listConversationsForDeck(id);
     return NextResponse.json({ conversations });
   } catch (err) {
     return errorResponse(err);
@@ -35,16 +36,17 @@ export async function GET(
 
 export async function POST(
   req: NextRequest,
-  { params }: { params: { id: string } },
+  { params }: { params: Promise<{ id: string }> },
 ): Promise<NextResponse> {
   try {
+    const { id } = await params;
     const user = await requireTeamUser();
     const raw = await req.json().catch(() => undefined);
     const parsed = bodySchema.safeParse(raw);
     if (!parsed.success) throw new ValidationError('Invalid request body', parsed.error.flatten());
 
     const conversation = await createConversation({
-      deckId: params.id,
+      deckId: id,
       user,
       title: parsed.data?.title ?? null,
     });

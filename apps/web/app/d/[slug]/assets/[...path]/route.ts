@@ -71,15 +71,16 @@ function safeJoinAssetPath(parts: string[]): string | null {
 
 export async function GET(
   request: Request,
-  { params }: { params: { slug: string; path: string[] } },
+  { params }: { params: Promise<{ slug: string; path: string[] }> },
 ) {
   try {
     await requireTeamUser();
+    const { slug, path: pathSegments } = await params;
 
-    const relPath = safeJoinAssetPath(params.path);
+    const relPath = safeJoinAssetPath(pathSegments);
     if (!relPath) throw new NotFoundError('Asset not found', 'asset_invalid_path');
 
-    const deck = await getDeckBySlug(params.slug);
+    const deck = await getDeckBySlug(slug);
     if (!deck.headCommitSha) {
       throw new NotFoundError('Deck has no published content', 'deck_no_head');
     }

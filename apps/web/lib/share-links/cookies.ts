@@ -31,9 +31,12 @@ function sign(recipientId: string, deckId: string): string {
   return h.digest('base64url');
 }
 
-export function setRecipientCookie(opts: { deckId: string; recipientId: string }): void {
+export async function setRecipientCookie(opts: {
+  deckId: string;
+  recipientId: string;
+}): Promise<void> {
   const value = `${opts.recipientId}.${sign(opts.recipientId, opts.deckId)}`;
-  cookies().set(cookieName(opts.deckId), value, {
+  (await cookies()).set(cookieName(opts.deckId), value, {
     httpOnly: true,
     secure: env.isProduction,
     sameSite: 'lax',
@@ -42,8 +45,8 @@ export function setRecipientCookie(opts: { deckId: string; recipientId: string }
   });
 }
 
-export function clearRecipientCookie(deckId: string): void {
-  cookies().set(cookieName(deckId), '', {
+export async function clearRecipientCookie(deckId: string): Promise<void> {
+  (await cookies()).set(cookieName(deckId), '', {
     httpOnly: true,
     secure: env.isProduction,
     sameSite: 'lax',
@@ -56,8 +59,8 @@ export function clearRecipientCookie(deckId: string): void {
  * Read + verify the recipient cookie for `deckId`. Returns the recipient id
  * if the signature matches, else null.
  */
-export function readRecipientCookie(deckId: string): string | null {
-  const raw = cookies().get(cookieName(deckId))?.value;
+export async function readRecipientCookie(deckId: string): Promise<string | null> {
+  const raw = (await cookies()).get(cookieName(deckId))?.value;
   if (!raw) return null;
   const dot = raw.lastIndexOf('.');
   if (dot <= 0) return null;

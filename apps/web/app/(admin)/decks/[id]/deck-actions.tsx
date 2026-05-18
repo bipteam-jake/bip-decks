@@ -2,20 +2,30 @@
 
 import { useRouter } from 'next/navigation';
 import { useState } from 'react';
+import { toast } from 'sonner';
+
+import { Button } from '@/components/ui/button';
+import {
+  Dialog,
+  DialogContent,
+  DialogDescription,
+  DialogFooter,
+  DialogHeader,
+  DialogTitle,
+} from '@/components/ui/dialog';
 
 export function DeckActions({ id, archived }: { id: string; archived: boolean }) {
   const router = useRouter();
   const [busy, setBusy] = useState<string | null>(null);
-  const [error, setError] = useState<string | null>(null);
+  const [confirmOpen, setConfirmOpen] = useState(false);
 
   async function call(label: string, path: string, method: 'POST' | 'DELETE') {
     setBusy(label);
-    setError(null);
     try {
       const res = await fetch(path, { method });
       if (!res.ok) {
         const body = await res.json().catch(() => null);
-        setError(body?.error?.message ?? `${label} failed (${res.status})`);
+        toast.error(body?.error?.message ?? `${label} failed (${res.status})`);
         return false;
       }
       return true;
@@ -32,13 +42,7 @@ export function DeckActions({ id, archived }: { id: string; archived: boolean })
   }
 
   async function softDelete() {
-    if (
-      !window.confirm(
-        'Soft-delete this deck? It will be hidden from lists and hard-deleted after 30 days.',
-      )
-    ) {
-      return;
-    }
+    setConfirmOpen(false);
     if (await call('Delete', `/api/decks/${id}`, 'DELETE')) {
       router.push('/decks');
       router.refresh();
@@ -47,27 +51,47 @@ export function DeckActions({ id, archived }: { id: string; archived: boolean })
 
   return (
     <div className="space-y-2">
-      <button
+      <Button
         type="button"
+        variant="outline"
+        size="sm"
+        className="w-full"
+        loading={busy === 'Archive' || busy === 'Unarchive'}
         disabled={busy !== null}
         onClick={() => void toggleArchive()}
-        className="w-full rounded border border-neutral-300 px-3 py-2 text-sm hover:bg-neutral-100 disabled:opacity-50"
       >
-        {busy === 'Archive' || busy === 'Unarchive' ? '…' : archived ? 'Unarchive' : 'Archive'}
-      </button>
-      <button
+        {archived ? 'Unarchive' : 'Archive'}
+      </Button>
+      <Button
         type="button"
+        variant="destructive"
+        size="sm"
+        className="w-full"
+        loading={busy === 'Delete'}
         disabled={busy !== null}
-        onClick={() => void softDelete()}
-        className="w-full rounded border border-red-300 px-3 py-2 text-sm text-red-700 hover:bg-red-50 disabled:opacity-50"
+        onClick={() => setConfirmOpen(true)}
       >
-        {busy === 'Delete' ? '…' : 'Soft-delete'}
-      </button>
-      {error && (
-        <p role="alert" className="text-xs text-red-700">
-          {error}
-        </p>
-      )}
+        Soft-delete
+      </Button>
+
+      <Dialog open={confirmOpen} onOpenChange={setConfirmOpen}>
+        <DialogContent>
+          <DialogHeader>
+            <DialogTitle>Soft-delete this deck?</DialogTitle>
+            <DialogDescription>
+              The deck will be hidden from lists and hard-deleted after 30 days.
+            </DialogDescription>
+          </DialogHeader>
+          <DialogFooter>
+            <Button variant="outline" onClick={() => setConfirmOpen(false)}>
+              Cancel
+            </Button>
+            <Button variant="destructive" onClick={() => void softDelete()}>
+              Soft-delete
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
     </div>
   );
 }

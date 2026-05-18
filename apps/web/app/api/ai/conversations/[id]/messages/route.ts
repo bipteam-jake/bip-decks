@@ -35,9 +35,10 @@ const bodySchema = z.object({
 
 export async function POST(
   req: NextRequest,
-  { params }: { params: { id: string } },
+  { params }: { params: Promise<{ id: string }> },
 ): Promise<NextResponse> {
   try {
+    const { id } = await params;
     const user = await requireTeamUser();
     const raw = await req.json().catch(() => null);
     const parsed = bodySchema.safeParse(raw);
@@ -45,7 +46,7 @@ export async function POST(
 
     const requestId = req.headers.get('x-request-id') ?? randomUUID();
     const result = await postUserMessage({
-      conversationId: params.id,
+      conversationId: id,
       user,
       text: parsed.data.text,
       currentSlideId: parsed.data.currentSlideId,

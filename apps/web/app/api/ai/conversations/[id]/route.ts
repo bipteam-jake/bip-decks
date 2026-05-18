@@ -12,11 +12,12 @@ export const dynamic = 'force-dynamic';
 
 export async function GET(
   _req: NextRequest,
-  { params }: { params: { id: string } },
+  { params }: { params: Promise<{ id: string }> },
 ): Promise<NextResponse> {
   try {
+    const { id } = await params;
     await requireTeamUser();
-    const { conversation, messages, jobs } = await getConversation(params.id);
+    const { conversation, messages, jobs } = await getConversation(id);
     return NextResponse.json({ conversation, messages, jobs });
   } catch (err) {
     return errorResponse(err);

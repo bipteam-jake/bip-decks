@@ -11,12 +11,13 @@ import { revokeShareLink } from '@/lib/share-links/service';
 export const runtime = 'nodejs';
 export const dynamic = 'force-dynamic';
 
-type Ctx = { params: { id: string } };
+type Ctx = { params: Promise<{ id: string }> };
 
 export async function POST(_req: NextRequest, { params }: Ctx): Promise<NextResponse> {
   try {
+    const { id } = await params;
     await requireTeamUser();
-    const shareLink = await revokeShareLink(params.id);
+    const shareLink = await revokeShareLink(id);
     return NextResponse.json({ shareLink });
   } catch (err) {
     return errorResponse(err);

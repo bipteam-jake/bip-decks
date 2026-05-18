@@ -103,3 +103,16 @@ See `bip-deck-platform-data-model.md` §1 for the full list. Quick summary:
 - Prefer small, complete changes over large sketches. A working endpoint with one happy path is better than five half-built ones.
 - When suggesting a change to architecture or docs, propose it as a question first, not a fait accompli.
 - Tests are not optional but they're sized to the phase: Phase 1 is "Playwright smoke tests cover the primary flows plus unit tests on service-layer business logic." Don't write exhaustive test suites yet.
+
+## Design system
+
+See `/AGENTS.md` at the repo root for the full UI/UX contract. Highlights that every contributor and AI agent must honor:
+
+- **BIP brand palette is locked.** Use the CSS custom properties defined in `apps/web/app/globals.css` (`--primary`, `--brand-sky`, `--brand-coral`, etc.) and the semantic Tailwind tokens (`bg-primary`, `text-muted-foreground`, …). Do not introduce new raw hex colors in components.
+- **shadcn (new-york) is the primitive library.** Add new UI atoms with `npx shadcn@latest add <component>` against `apps/web/components.json`. Compose from `@/components/ui/*`; do not hand-roll buttons, dialogs, inputs, etc.
+- **Forbidden APIs.** No `window.confirm` / `window.alert` / native `confirm()` / `alert()`; use a `Dialog`. No native `<select>`, `<input type="date">`, or `<input type="checkbox">` in app code; use the shadcn equivalents.
+- **Errors & feedback.** Transient errors → `toast.error(...)` from `sonner`. Inline form validation → `<p className="text-destructive">`. Never `throw` to surface a UX message.
+- **Mobile-first responsive.** Default to single column (`grid-cols-1`, `flex-col`) and add `sm:` / `md:` / `lg:` variants when widening. Fixed `min-w-[Nrem]` ≥ 8rem and `grid-cols-{2..9}` without a responsive prefix are blocked by the `npm run lint:responsive` gate (`apps/web/scripts/check-responsive.mjs`).
+- **Verification gate before finishing any UI change.** From `apps/web/`: `npx tsc --noEmit` AND `npm run lint:responsive` must both pass.
+- **Fonts & theme.** Barlow (`--font-barlow`) for UI, Geist Mono (`--font-geist-mono`) for code. Dark mode is opt-in via `next-themes` (class strategy); never assume light-only styling.
+- **Page chrome.** Admin pages use `PageHeader` / `SectionHeader` from `@/components/ui/page-header` and live inside `apps/web/app/(admin)/layout.tsx` (Sidebar + Header + `MainContentWrapper`). The public deck runtime (`apps/web/app/d/[slug]/route.ts`) is intentionally outside this shell.

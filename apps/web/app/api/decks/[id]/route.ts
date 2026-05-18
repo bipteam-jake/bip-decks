@@ -13,12 +13,13 @@ import { getDeckById, softDeleteDeck, updateDeck } from '@/lib/decks/service';
 export const runtime = 'nodejs';
 export const dynamic = 'force-dynamic';
 
-type Ctx = { params: { id: string } };
+type Ctx = { params: Promise<{ id: string }> };
 
 export async function GET(_req: NextRequest, { params }: Ctx): Promise<NextResponse> {
   try {
+    const { id } = await params;
     await requireTeamUser();
-    const deck = await getDeckById(params.id);
+    const deck = await getDeckById(id);
     return NextResponse.json({ deck });
   } catch (err) {
     return errorResponse(err);
@@ -36,11 +37,12 @@ const updateSchema = z
 
 export async function PATCH(req: NextRequest, { params }: Ctx): Promise<NextResponse> {
   try {
+    const { id } = await params;
     await requireTeamUser();
     const body = await req.json().catch(() => null);
     const parsed = updateSchema.safeParse(body);
     if (!parsed.success) throw new ValidationError('Invalid request body', parsed.error.flatten());
-    const deck = await updateDeck(params.id, parsed.data);
+    const deck = await updateDeck(id, parsed.data);
     return NextResponse.json({ deck });
   } catch (err) {
     return errorResponse(err);
@@ -49,8 +51,9 @@ export async function PATCH(req: NextRequest, { params }: Ctx): Promise<NextResp
 
 export async function DELETE(_req: NextRequest, { params }: Ctx): Promise<NextResponse> {
   try {
+    const { id } = await params;
     await requireTeamUser();
-    await softDeleteDeck(params.id);
+    await softDeleteDeck(id);
     return new NextResponse(null, { status: 204 });
   } catch (err) {
     return errorResponse(err);

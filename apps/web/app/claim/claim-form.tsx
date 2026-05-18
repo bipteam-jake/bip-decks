@@ -10,6 +10,11 @@
 // two recipient rows for the same browser.
 
 import { useState, type FormEvent } from 'react';
+import { toast } from 'sonner';
+
+import { Button } from '@/components/ui/button';
+import { Input } from '@/components/ui/input';
+import { Label } from '@/components/ui/label';
 
 type Props = { token: string };
 
@@ -33,12 +38,10 @@ export function ClaimForm({ token }: Props) {
   const [displayName, setDisplayName] = useState('');
   const [email, setEmail] = useState('');
   const [submitting, setSubmitting] = useState(false);
-  const [error, setError] = useState<string | null>(null);
 
   async function onSubmit(ev: FormEvent<HTMLFormElement>) {
     ev.preventDefault();
     setSubmitting(true);
-    setError(null);
     try {
       const res = await fetch('/api/share-links/claim', {
         method: 'POST',
@@ -60,43 +63,43 @@ export function ClaimForm({ token }: Props) {
       }
       window.location.href = data.redirectTo;
     } catch (e) {
-      setError(e instanceof Error ? e.message : String(e));
+      toast.error(e instanceof Error ? e.message : String(e));
       setSubmitting(false);
     }
   }
 
   return (
-    <form onSubmit={onSubmit} className="mt-6 flex flex-col gap-3">
-      <label className="flex flex-col gap-1 text-sm">
-        <span className="text-gray-700">Your name</span>
-        <input
+    <form onSubmit={onSubmit} className="space-y-4">
+      <div className="space-y-2">
+        <Label htmlFor="claim-name">Your name</Label>
+        <Input
+          id="claim-name"
           required
           type="text"
           autoFocus
           maxLength={120}
           value={displayName}
           onChange={(e) => setDisplayName(e.target.value)}
-          className="rounded border border-gray-300 px-3 py-2"
         />
-      </label>
-      <label className="flex flex-col gap-1 text-sm">
-        <span className="text-gray-700">Email (optional)</span>
-        <input
+      </div>
+      <div className="space-y-2">
+        <Label htmlFor="claim-email">Email (optional)</Label>
+        <Input
+          id="claim-email"
           type="email"
           maxLength={200}
           value={email}
           onChange={(e) => setEmail(e.target.value)}
-          className="rounded border border-gray-300 px-3 py-2"
         />
-      </label>
-      {error ? <p className="text-sm text-red-600">{error}</p> : null}
-      <button
+      </div>
+      <Button
         type="submit"
-        disabled={submitting || displayName.trim().length === 0}
-        className="mt-2 rounded bg-gray-900 px-4 py-2 text-white disabled:opacity-50"
+        className="w-full"
+        disabled={displayName.trim().length === 0}
+        loading={submitting}
       >
-        {submitting ? 'Opening…' : 'Open deck'}
-      </button>
+        Open deck
+      </Button>
     </form>
   );
 }

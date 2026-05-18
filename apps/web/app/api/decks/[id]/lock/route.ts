@@ -18,11 +18,12 @@ export const dynamic = 'force-dynamic';
 
 export async function GET(
   _req: NextRequest,
-  { params }: { params: { id: string } },
+  { params }: { params: Promise<{ id: string }> },
 ): Promise<NextResponse> {
   try {
+    const { id } = await params;
     const user = await requireTeamUser();
-    const state = await getLockState(params.id, user.id);
+    const state = await getLockState(id, user.id);
     return NextResponse.json({ lock: state });
   } catch (err) {
     return errorResponse(err);
@@ -31,12 +32,13 @@ export async function GET(
 
 export async function POST(
   _req: NextRequest,
-  { params }: { params: { id: string } },
+  { params }: { params: Promise<{ id: string }> },
 ): Promise<NextResponse> {
   try {
+    const { id } = await params;
     const user = await requireTeamUser();
-    await acquireOrRefreshLock(params.id, user.id);
-    const state = await getLockState(params.id, user.id);
+    await acquireOrRefreshLock(id, user.id);
+    const state = await getLockState(id, user.id);
     return NextResponse.json({ lock: state });
   } catch (err) {
     return errorResponse(err);
@@ -45,12 +47,13 @@ export async function POST(
 
 export async function PUT(
   _req: NextRequest,
-  { params }: { params: { id: string } },
+  { params }: { params: Promise<{ id: string }> },
 ): Promise<NextResponse> {
   try {
+    const { id } = await params;
     const user = await requireTeamUser();
-    await takeOverLock(params.id, user.id);
-    const state = await getLockState(params.id, user.id);
+    await takeOverLock(id, user.id);
+    const state = await getLockState(id, user.id);
     return NextResponse.json({ lock: state });
   } catch (err) {
     return errorResponse(err);
@@ -59,11 +62,12 @@ export async function PUT(
 
 export async function DELETE(
   _req: NextRequest,
-  { params }: { params: { id: string } },
+  { params }: { params: Promise<{ id: string }> },
 ): Promise<NextResponse> {
   try {
+    const { id } = await params;
     const user = await requireTeamUser();
-    await releaseLock(params.id, user.id);
+    await releaseLock(id, user.id);
     return NextResponse.json({ ok: true });
   } catch (err) {
     return errorResponse(err);

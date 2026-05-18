@@ -2,79 +2,119 @@
 // the auth context already validated in the parent layout.
 
 import Link from 'next/link';
+import { Archive, FileText } from 'lucide-react';
 
 import { listDecks } from '@/lib/decks/service';
+import { Badge } from '@/components/ui/badge';
+import { Button } from '@/components/ui/button';
+import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
+import { PageHeader } from '@/components/ui/page-header';
+import {
+  Table,
+  TableBody,
+  TableCell,
+  TableHead,
+  TableHeader,
+  TableRow,
+} from '@/components/ui/table';
 import { CreateDeckForm } from './create-deck-form';
 
 export const dynamic = 'force-dynamic';
 
-export default async function DecksPage({ searchParams }: { searchParams: { archived?: string } }) {
-  const includeArchived = searchParams.archived === '1';
+export default async function DecksPage({
+  searchParams,
+}: {
+  searchParams: Promise<{ archived?: string }>;
+}) {
+  const sp = await searchParams;
+  const includeArchived = sp.archived === '1';
   const decks = await listDecks({ includeArchived });
 
   return (
     <div className="space-y-6">
-      <div className="flex items-end justify-between gap-4">
-        <div>
-          <h1 className="text-xl font-semibold">Decks</h1>
-          <p className="mt-1 text-sm text-neutral-600">
-            {decks.length} {decks.length === 1 ? 'deck' : 'decks'}
-            {includeArchived ? ' (including archived)' : ''}
-          </p>
-        </div>
-        <Link
-          href={includeArchived ? '/decks' : '/decks?archived=1'}
-          className="text-sm text-neutral-700 underline hover:text-neutral-900"
-        >
-          {includeArchived ? 'Hide archived' : 'Show archived'}
-        </Link>
-      </div>
+      <PageHeader
+        title="Decks"
+        description={`${decks.length} ${decks.length === 1 ? 'deck' : 'decks'}${includeArchived ? ' (including archived)' : ''}`}
+        actions={
+          <Button variant="outline" size="sm" asChild>
+            <Link href={includeArchived ? '/decks' : '/decks?archived=1'}>
+              {includeArchived ? 'Hide archived' : 'Show archived'}
+            </Link>
+          </Button>
+        }
+      />
 
-      <section className="rounded border border-neutral-200 bg-white p-4">
-        <h2 className="text-sm font-semibold">Create a deck</h2>
-        <div className="mt-3">
+      <Card>
+        <CardHeader>
+          <CardTitle className="text-base">Create a deck</CardTitle>
+        </CardHeader>
+        <CardContent>
           <CreateDeckForm />
-        </div>
-      </section>
+        </CardContent>
+      </Card>
 
-      <section>
-        {decks.length === 0 ? (
-          <p className="rounded border border-dashed border-neutral-300 bg-white p-8 text-center text-sm text-neutral-600">
-            No decks yet.
-          </p>
-        ) : (
-          <ul className="divide-y divide-neutral-200 rounded border border-neutral-200 bg-white">
-            {decks.map((deck) => (
-              <li key={deck.id} className="flex items-center justify-between px-4 py-3">
-                <div className="min-w-0">
-                  <Link
-                    href={`/decks/${deck.id}`}
-                    className="block truncate text-sm font-medium text-neutral-900 hover:underline"
-                  >
-                    {deck.title}
-                  </Link>
-                  <div className="mt-0.5 truncate font-mono text-xs text-neutral-500">
-                    {deck.slug}
-                  </div>
-                </div>
-                <div className="flex shrink-0 items-center gap-3 text-xs text-neutral-600">
-                  <span className="rounded bg-neutral-100 px-1.5 py-0.5 font-mono">
-                    {deck.lifecycleStage}
-                  </span>
-                  {deck.archivedAt && (
-                    <span className="rounded bg-amber-100 px-1.5 py-0.5 text-amber-900">
-                      archived
-                    </span>
-                  )}
-                  <span title={deck.updatedAt.toISOString()}>
-                    {deck.updatedAt.toISOString().slice(0, 10)}
-                  </span>
-                </div>
-              </li>
-            ))}
-          </ul>
-        )}
-      </section>
+      <Card>
+        <CardContent className="p-0">
+          {decks.length === 0 ? (
+            <div className="flex flex-col items-center gap-3 px-6 py-16 text-center">
+              <div className="flex h-12 w-12 items-center justify-center rounded-full bg-muted text-muted-foreground">
+                <FileText className="h-5 w-5" />
+              </div>
+              <div className="space-y-1">
+                <p className="text-sm font-medium">No decks yet</p>
+                <p className="text-sm text-muted-foreground">
+                  Create your first deck using the form above.
+                </p>
+              </div>
+            </div>
+          ) : (
+            <Table>
+              <TableHeader>
+                <TableRow>
+                  <TableHead>Title</TableHead>
+                  <TableHead className="hidden md:table-cell">Slug</TableHead>
+                  <TableHead className="hidden sm:table-cell">Stage</TableHead>
+                  <TableHead className="hidden lg:table-cell">Updated</TableHead>
+                  <TableHead className="w-12 text-right" aria-label="Status" />
+                </TableRow>
+              </TableHeader>
+              <TableBody>
+                {decks.map((deck) => (
+                  <TableRow key={deck.id} className="cursor-pointer">
+                    <TableCell className="font-medium">
+                      <Link href={`/decks/${deck.id}`} className="block hover:underline">
+                        {deck.title}
+                      </Link>
+                    </TableCell>
+                    <TableCell className="hidden font-mono text-xs text-muted-foreground md:table-cell">
+                      {deck.slug}
+                    </TableCell>
+                    <TableCell className="hidden sm:table-cell">
+                      <Badge variant="outline" className="font-mono text-[10px] uppercase">
+                        {deck.lifecycleStage}
+                      </Badge>
+                    </TableCell>
+                    <TableCell
+                      className="hidden text-xs text-muted-foreground lg:table-cell"
+                      title={deck.updatedAt.toISOString()}
+                    >
+                      {deck.updatedAt.toISOString().slice(0, 10)}
+                    </TableCell>
+                    <TableCell className="text-right">
+                      {deck.archivedAt ? (
+                        <Badge variant="secondary" className="gap-1">
+                          <Archive className="h-3 w-3" />
+                          Archived
+                        </Badge>
+                      ) : null}
+                    </TableCell>
+                  </TableRow>
+                ))}
+              </TableBody>
+            </Table>
+          )}
+        </CardContent>
+      </Card>
     </div>
   );
 }
