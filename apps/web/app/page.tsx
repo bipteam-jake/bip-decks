@@ -1,10 +1,9 @@
+// Root path is handled by middleware (cookie-absent → /login) and then by
+// (admin)/layout.tsx for token validation. If a request still lands here
+// (cookie present, valid session) bounce them into the admin shell.
+
+import { redirect } from 'next/navigation';
+
 export default function HomePage() {
-  return (
-    <main className="mx-auto max-w-2xl p-8">
-      <h1 className="text-2xl font-semibold">BIP Deck Platform</h1>
-      <p className="mt-2 text-neutral-600">
-        Phase 1 scaffold. See <code className="font-mono">/api/health</code> for service status.
-      </p>
-    </main>
-  );
+  redirect('/decks');
 }
