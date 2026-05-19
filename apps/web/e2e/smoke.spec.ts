@@ -29,6 +29,7 @@ test('Phase 1 primary flows: author, share, comment, observe', async ({ browser 
 
   // ── 2. Create deck ────────────────────────────────────────────────────────
   await team.goto('/decks');
+  await team.getByRole('button', { name: 'New deck' }).click();
   const title = `Smoke ${Date.now()}`;
   await team.getByPlaceholder('Deck title').fill(title);
   await team.getByRole('button', { name: 'Create deck' }).click();
