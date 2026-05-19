@@ -19,6 +19,7 @@ import {
   approveOutline,
   buildOutlineFiles,
   createOutlineConversation,
+  editOutline,
   findLatestOutline,
   getOutlineConversation,
   postOutlineMessage,
@@ -163,7 +164,13 @@ describe('approveOutline', () => {
     // deck.json manifest reflects the outline
     const manifest = JSON.parse(readFileSync(path.join(deck.repoPath, 'deck.json'), 'utf8'));
     expect(manifest.slides).toHaveLength(5);
-    expect(manifest.slides.map((s: { id: string }) => s.id)).toEqual(['s1', 's2', 's3', 's4', 's5']);
+    expect(manifest.slides.map((s: { id: string }) => s.id)).toEqual([
+      's1',
+      's2',
+      's3',
+      's4',
+      's5',
+    ]);
 
     // Conversation now marked approved
     const fetched = await getOutlineConversation(initial.conversation.id);
@@ -205,5 +212,83 @@ describe('buildOutlineFiles', () => {
 describe('findLatestOutline', () => {
   it('returns null when no assistant outline payload has been persisted', async () => {
     expect(findLatestOutline([])).toBeNull();
+  });
+});
+
+describe('editOutline', () => {
+  it('persists a manual edit as a USER message and overrides the latest outline', async () => {
+    const user = await makeUser();
+    const deck = await makeDeck(user);
+    const initial = await createOutlineConversation({ deckId: deck.id, user, brief: brief() });
+
+    const after = await editOutline({
+      conversationId: initial.conversation.id,
+      user,
+      outline: {
+        slides: [
+          { id: 'ignored', title: 'Manual title', notes: 'Manual notes', layoutHint: 'hero' },
+          { id: 'ignored2', title: 'Second', notes: 'Second notes' },
+        ],
+      },
+    });
+
+    expect(after.messages).toHaveLength(3);
+    const edit = after.messages[2]!;
+    expect(edit.role).toBe('USER');
+    const content = edit.content as Record<string, unknown>;
+    expect(content.kind).toBe('edit');
+
+    const latest = findLatestOutline(after.messages);
+    expect(latest).not.toBeNull();
+    expect(latest!.slides).toHaveLength(2);
+    expect(latest!.slides[0]!.id).toBe('s1');
+    expect(latest!.slides[0]!.title).toBe('Manual title');
+    expect(latest!.slides[1]!.id).toBe('s2');
+  });
+
+  it('rejects an empty outline with ValidationError', async () => {
+    const user = await makeUser();
+    const deck = await makeDeck(user);
+    const initial = await createOutlineConversation({ deckId: deck.id, user, brief: brief() });
+    await expect(
+      editOutline({
+        conversationId: initial.conversation.id,
+        user,
+        outline: { slides: [] },
+      }),
+    ).rejects.toBeInstanceOf(ValidationError);
+  });
+
+  it('approve uses the edited outline (not the AI draft)', async () => {
+    const user = await makeUser();
+    const deck = await makeDeck(user);
+    const initial = await createOutlineConversation({ deckId: deck.id, user, brief: brief() });
+    await editOutline({
+      conversationId: initial.conversation.id,
+      user,
+      outline: {
+        slides: [{ id: 's1', title: 'Only slide', notes: 'Only notes' }],
+      },
+    });
+    const result = await approveOutline({ conversationId: initial.conversation.id, user });
+    expect(result.slideCount).toBe(1);
+    const manifest = JSON.parse(readFileSync(path.join(deck.repoPath, 'deck.json'), 'utf8'));
+    expect(manifest.slides).toEqual([
+      expect.objectContaining({ id: 's1', title: 'Only slide', notes: 'Only notes' }),
+    ]);
+  });
+
+  it('rejects edits to an already-approved outline', async () => {
+    const user = await makeUser();
+    const deck = await makeDeck(user);
+    const initial = await createOutlineConversation({ deckId: deck.id, user, brief: brief() });
+    await approveOutline({ conversationId: initial.conversation.id, user });
+    await expect(
+      editOutline({
+        conversationId: initial.conversation.id,
+        user,
+        outline: { slides: [{ id: 's1', title: 't', notes: 'n' }] },
+      }),
+    ).rejects.toBeInstanceOf(ConflictError);
   });
 });

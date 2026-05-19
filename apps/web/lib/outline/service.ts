@@ -29,13 +29,7 @@ import path from 'node:path';
 import fs from 'node:fs/promises';
 import { simpleGit } from 'simple-git';
 
-import type {
-  AIConversation,
-  AIMessage,
-  Deck,
-  Prisma,
-  User,
-} from '@bip/db';
+import type { AIConversation, AIMessage, Deck, Prisma, User } from '@bip/db';
 import {
   buildOutlineKickoff,
   generateOutlineTurn,
@@ -57,7 +51,15 @@ import { ConflictError, NotFoundError, ValidationError } from '@/lib/errors';
 
 export type OutlineUserContent =
   | { kind: 'brief'; text: string; brief: OutlineBrief }
-  | { kind: 'user'; text: string };
+  | { kind: 'user'; text: string }
+  /**
+   * Manual outline edit — the user bypassed the chat and directly
+   * mutated the outline in the preview pane. `outline` is the full new
+   * draft (always complete, never partial). On replay we emit a Claude
+   * user-turn carrying the new JSON so subsequent assistant turns honor
+   * the user's edits as the new baseline.
+   */
+  | { kind: 'edit'; text: string; outline: OutlineDraft };
 
 export type OutlineAssistantContent =
   | { kind: 'assistant'; raw: string; payload: OutlineTurnPayload }
@@ -90,6 +92,17 @@ function buildOutlineHistory(messages: AIMessage[]): ClaudeMessage[] {
     const c = asOutlineContent(m.content);
     if (m.role === 'USER' && (c.kind === 'brief' || c.kind === 'user')) {
       history.push({ role: 'user', content: c.text });
+    } else if (m.role === 'USER' && c.kind === 'edit') {
+      // Surface the new outline to Claude as a user turn so the next
+      // assistant response uses it as the baseline.
+      history.push({
+        role: 'user',
+        content: `${c.text}\n\nHere is the full outline after my edits as JSON (use this as the new baseline):\n\n${JSON.stringify(
+          { kind: 'outline', outline: c.outline },
+          null,
+          2,
+        )}`,
+      });
     } else if (m.role === 'ASSISTANT' && c.kind === 'assistant') {
       history.push({ role: 'assistant', content: c.raw });
     }
@@ -97,14 +110,21 @@ function buildOutlineHistory(messages: AIMessage[]): ClaudeMessage[] {
   return history;
 }
 
-/** Latest assistant `outline` payload in the conversation, or null. */
+/**
+ * Latest outline in the conversation, or null. Considers both assistant
+ * `outline` payloads and user manual `edit` messages, whichever is most
+ * recent — that's the draft the user is currently looking at and will
+ * approve.
+ */
 export function findLatestOutline(messages: AIMessage[]): OutlineDraft | null {
   for (let i = messages.length - 1; i >= 0; i--) {
     const m = messages[i]!;
-    if (m.role !== 'ASSISTANT') continue;
     const c = asOutlineContent(m.content);
-    if (c.kind === 'assistant' && c.payload.kind === 'outline') {
+    if (m.role === 'ASSISTANT' && c.kind === 'assistant' && c.payload.kind === 'outline') {
       return c.payload.outline;
+    }
+    if (m.role === 'USER' && c.kind === 'edit') {
+      return c.outline;
     }
   }
   return null;
@@ -186,9 +206,7 @@ export async function createOutlineConversation(
 // Fetch
 // ---------------------------------------------------------------------------
 
-export async function getOutlineConversation(
-  id: string,
-): Promise<OutlineConversationWithMessages> {
+export async function getOutlineConversation(id: string): Promise<OutlineConversationWithMessages> {
   const conversation = await prisma.aIConversation.findUnique({ where: { id } });
   if (!conversation || conversation.kind !== 'OUTLINE') {
     throw new NotFoundError('Outline conversation not found', 'outline_conversation_not_found');
@@ -202,7 +220,9 @@ export async function getOutlineConversation(
 }
 
 /** Locate the (deck's) outline conversation, if any. */
-export async function findOutlineConversationForDeck(deckId: string): Promise<AIConversation | null> {
+export async function findOutlineConversationForDeck(
+  deckId: string,
+): Promise<AIConversation | null> {
   return prisma.aIConversation.findFirst({
     where: { deckId, kind: 'OUTLINE' },
     orderBy: { createdAt: 'desc' },
@@ -237,7 +257,10 @@ export async function postOutlineMessage(
     data: {
       conversationId: conversation.id,
       role: 'USER',
-      content: { kind: 'user', text } satisfies OutlineUserContent as unknown as Prisma.InputJsonValue,
+      content: {
+        kind: 'user',
+        text,
+      } satisfies OutlineUserContent as unknown as Prisma.InputJsonValue,
     },
   });
 
@@ -247,6 +270,100 @@ export async function postOutlineMessage(
   });
 
   return getOutlineConversation(conversation.id);
+}
+
+// ---------------------------------------------------------------------------
+// Manual edit (user edits the outline directly in the preview pane)
+// ---------------------------------------------------------------------------
+
+export interface EditOutlineInput {
+  conversationId: string;
+  user: User;
+  outline: OutlineDraft;
+}
+
+/**
+ * Persist a user-authored outline revision. Stored as a USER message with
+ * `kind: 'edit'` so the chat can render it distinctly and Claude sees it
+ * as the new baseline on the next turn. Validates structure + emptiness;
+ * does NOT run a Claude turn.
+ */
+export async function editOutline(
+  input: EditOutlineInput,
+): Promise<OutlineConversationWithMessages> {
+  const { conversation } = await getOutlineConversation(input.conversationId);
+  if (conversation.approvedAt) {
+    throw new ConflictError(
+      'Outline has already been approved; further edits use the AI editor',
+      'outline_already_approved',
+    );
+  }
+
+  const cleaned = sanitizeOutline(input.outline);
+
+  await prisma.aIMessage.create({
+    data: {
+      conversationId: conversation.id,
+      role: 'USER',
+      content: {
+        kind: 'edit',
+        text: 'I edited the outline directly.',
+        outline: cleaned,
+      } satisfies OutlineUserContent as unknown as Prisma.InputJsonValue,
+    },
+  });
+  await prisma.aIConversation.update({
+    where: { id: conversation.id },
+    data: { updatedAt: new Date() },
+  });
+
+  return getOutlineConversation(conversation.id);
+}
+
+/**
+ * Normalize a user-submitted outline: trim strings, drop empty data points,
+ * renumber ids to s1..sN so the scaffold guarantees match (see
+ * `buildOutlineFiles`). Throws ValidationError on structural problems.
+ */
+function sanitizeOutline(outline: OutlineDraft): OutlineDraft {
+  if (!outline || !Array.isArray(outline.slides) || outline.slides.length === 0) {
+    throw new ValidationError('Outline must include at least one slide', 'empty_outline');
+  }
+  if (outline.slides.length > 50) {
+    throw new ValidationError('Outline cannot exceed 50 slides', 'outline_too_long');
+  }
+  const slides: OutlineSlide[] = outline.slides.map((s, i) => {
+    const title = (s.title ?? '').trim();
+    const notes = (s.notes ?? '').trim();
+    if (!title) {
+      throw new ValidationError(`Slide ${i + 1} is missing a title`, 'slide_title_required');
+    }
+    if (!notes) {
+      throw new ValidationError(`Slide ${i + 1} is missing notes`, 'slide_notes_required');
+    }
+    if (title.length > 200) {
+      throw new ValidationError(
+        `Slide ${i + 1} title is too long (max 200 chars)`,
+        'slide_title_too_long',
+      );
+    }
+    if (notes.length > 2000) {
+      throw new ValidationError(
+        `Slide ${i + 1} notes are too long (max 2000 chars)`,
+        'slide_notes_too_long',
+      );
+    }
+    const layoutHint = s.layoutHint?.trim() || null;
+    const dataPoints = (s.dataPoints ?? []).map((d) => d.trim()).filter((d) => d.length > 0);
+    return {
+      id: `s${i + 1}`,
+      title,
+      notes,
+      ...(layoutHint ? { layoutHint } : {}),
+      ...(dataPoints.length ? { dataPoints } : {}),
+    };
+  });
+  return { slides };
 }
 
 // ---------------------------------------------------------------------------

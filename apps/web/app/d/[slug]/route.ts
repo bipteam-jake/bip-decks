@@ -19,6 +19,7 @@ import { getBundleBySlug, getBundleForDeck } from '@/lib/decks/bundle-service';
 import { getDeckBySlug } from '@/lib/decks/service';
 import { getCommentViewer } from '@/lib/comments/viewer';
 import { renderCommentsOverlay } from '@/lib/comments/overlay';
+import { renderViewerChrome } from '@/lib/decks/viewer-chrome';
 import { loadActiveRecipientForDeck } from '@/lib/share-links/service';
 import { readRecipientCookie } from '@/lib/share-links/cookies';
 
@@ -99,7 +100,11 @@ export async function GET(request: Request, { params }: { params: Promise<{ slug
     //    cached bundle stays viewer-agnostic. The overlay HTML embeds the
     //    viewer's identity (display name, canModerate flag), so it must
     //    be assembled per-request. See lib/comments/overlay.ts.
+    //    The viewer chrome (single-slide presentation mode + postMessage
+    //    API) is identity-agnostic but injected here too so the cached
+    //    bundle bytes stay stable as authored HTML.
     // -----------------------------------------------------------------
+    html = injectBeforeBodyClose(html, renderViewerChrome());
     const viewer = await getCommentViewer({ deckId });
     let etagSeed = commitSha;
     if (viewer) {

@@ -13,8 +13,14 @@ import type { AIConversation, AIMessage, Deck, Job, Prisma, User } from '@bip/db
 import { prisma } from '@/lib/prisma';
 import { getDeckById } from '@/lib/decks/service';
 import { ConflictError, NotFoundError } from '@/lib/errors';
-import { buildPatternSystemPrompt, callClaude, type ClaudeMessage } from '@bip/ai-gateway';
+import {
+  buildBrandContextSystemPrompt,
+  buildPatternSystemPrompt,
+  callClaude,
+  type ClaudeMessage,
+} from '@bip/ai-gateway';
 import { listPatterns } from '@/lib/brand-kits/patterns-service';
+import { parseTokens, parseVoice } from '@/lib/brand-kits/tokens';
 
 import { AI_EDITOR_SYSTEM_PROMPT } from './system-prompt';
 import { buildDeckStateBlock } from './context';
@@ -159,16 +165,71 @@ export interface PostMessageResult {
 
 /**
  * Assemble the system prompt for an AI turn. The base editor prompt is
- * always included; if the deck is bound to a brand-kit version with
- * approved patterns, the pattern catalog is appended so Claude can reach
- * for them by slug. See packages/ai-gateway buildPatternSystemPrompt for
- * the prompt block shape.
+ * always included; if the deck is bound to a brand-kit version we layer on
+ * (a) a compact brand-context block (kit name, palette, fonts, voice,
+ * identity asset kinds) so Claude can author on-brand without needing
+ * patterns, and (b) the approved pattern catalog so it can reach for slugs
+ * when relevant. The brand block goes first because it's identity-level;
+ * patterns are concrete templates that may reference brand tokens.
  */
 async function assembleSystemPrompt(brandKitVersionId: string | null): Promise<string> {
   if (!brandKitVersionId) return AI_EDITOR_SYSTEM_PROMPT;
-  const patterns = await listPatterns({ brandKitVersionId, approvedOnly: true, limit: 200 });
+
+  // Load the version row + identity-asset kinds + parent kit name in
+  // parallel with the pattern list. All small queries; one Promise.all
+  // keeps the turn latency flat.
+  const [version, identityAssets, patterns] = await Promise.all([
+    prisma.brandKitVersion.findUnique({
+      where: { id: brandKitVersionId },
+      select: {
+        versionLabel: true,
+        tokens: true,
+        voice: true,
+        summary: true,
+        brandKit: { select: { name: true } },
+      },
+    }),
+    prisma.brandKitIdentityAsset.findMany({
+      where: { brandKitVersionId },
+      select: { kind: true },
+    }),
+    listPatterns({ brandKitVersionId, approvedOnly: true, limit: 200 }),
+  ]);
+
+  let prompt = AI_EDITOR_SYSTEM_PROMPT;
+
+  if (version) {
+    // Tokens/voice are user-authored JSON; parse defensively. If either
+    // fails validation we still want to surface what we can rather than
+    // dropping the whole brand block, so each is independently guarded.
+    let colors: Record<string, string> = {};
+    let fontFamilies: Record<string, string> = {};
+    try {
+      const tokens = parseTokens(version.tokens);
+      colors = tokens.colors;
+      fontFamilies = tokens.type.fontFamilies;
+    } catch {
+      /* invalid tokens — fall through with empty palette/fonts */
+    }
+    let voice = { tone: '', terminology: '', dos: '', donts: '' };
+    try {
+      voice = parseVoice(version.voice);
+    } catch {
+      /* invalid voice — leave defaults */
+    }
+    prompt = buildBrandContextSystemPrompt(prompt, {
+      kitName: version.brandKit.name,
+      versionLabel: version.versionLabel,
+      summary: version.summary,
+      colors,
+      fontFamilies,
+      voice,
+      identityAssetKinds: Array.from(new Set(identityAssets.map((a) => a.kind))),
+    });
+  }
+
   return buildPatternSystemPrompt(
-    AI_EDITOR_SYSTEM_PROMPT,
+    prompt,
     patterns.map((p) => ({
       slug: p.slug,
       name: p.name,

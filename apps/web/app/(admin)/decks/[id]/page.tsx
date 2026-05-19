@@ -20,7 +20,7 @@ import {
 } from '@/lib/ai/service';
 import { getSessionContext } from '@/lib/auth/middleware';
 import { Badge } from '@/components/ui/badge';
-import { PageHeader } from '@/components/ui/page-header';
+import { Button } from '@/components/ui/button';
 import { DeckDetailsDialog } from './deck-details-dialog';
 import { DeckEditor } from './deck-editor';
 
@@ -60,37 +60,30 @@ export default async function DeckDetailPage({ params }: { params: Promise<{ id:
   }
 
   return (
-    <div className="space-y-4">
-      <PageHeader
-        title={deck.title}
-        description={
-          <span className="flex flex-wrap items-center gap-2 text-xs">
-            <span className="font-mono text-muted-foreground">{deck.slug}</span>
-            <span className="text-muted-foreground">·</span>
-            <span className="font-mono text-muted-foreground">
-              HEAD {deck.headCommitSha?.slice(0, 7) ?? '—'}
-            </span>
-            <Badge variant="outline" className="font-mono text-[10px] uppercase">
-              {deck.lifecycleStage}
-            </Badge>
-            {deck.archivedAt ? (
-              <Badge variant="secondary" className="gap-1">
-                <Archive className="h-3 w-3" />
-                Archived
-              </Badge>
-            ) : null}
-          </span>
-        }
-        breadcrumb={
-          <Link
-            href="/decks"
-            className="inline-flex items-center gap-1 text-xs text-muted-foreground hover:text-foreground"
-          >
-            <ChevronLeft className="h-3 w-3" />
-            All decks
+    <div className="space-y-3">
+      {/* Compact one-row header so the editor takes most of the viewport.
+          Breadcrumb + title + meta sit inline; actions hug the right edge. */}
+      <div className="flex flex-wrap items-center gap-x-3 gap-y-2 border-b pb-2">
+        <Button asChild variant="ghost" size="icon" className="h-7 w-7">
+          <Link href="/decks" aria-label="All decks">
+            <ChevronLeft className="h-4 w-4" />
           </Link>
-        }
-        actions={
+        </Button>
+        <h1 className="h3 leading-none">{deck.title}</h1>
+        <span className="font-mono text-xs text-muted-foreground">{deck.slug}</span>
+        <span className="font-mono text-xs text-muted-foreground">
+          HEAD {deck.headCommitSha?.slice(0, 7) ?? '—'}
+        </span>
+        <Badge variant="outline" className="font-mono text-[10px] uppercase">
+          {deck.lifecycleStage}
+        </Badge>
+        {deck.archivedAt ? (
+          <Badge variant="secondary" className="gap-1">
+            <Archive className="h-3 w-3" />
+            Archived
+          </Badge>
+        ) : null}
+        <div className="ml-auto">
           <DeckDetailsDialog
             id={deck.id}
             title={deck.title}
@@ -99,8 +92,8 @@ export default async function DeckDetailPage({ params }: { params: Promise<{ id:
             archived={Boolean(deck.archivedAt)}
             brandKitVersionId={deck.brandKitVersionId}
           />
-        }
-      />
+        </div>
+      </div>
 
       <DeckEditor
         deck={{

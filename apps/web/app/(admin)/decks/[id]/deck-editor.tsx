@@ -24,8 +24,12 @@ import {
   Check,
   ChevronLeft,
   ChevronRight,
+  ChevronUp,
+  ChevronDown,
   ExternalLink,
   Lock as LockIcon,
+  MapPin,
+  MessageSquare,
   Send as SendIcon,
   Sparkles,
 } from 'lucide-react';
@@ -375,7 +379,7 @@ export function DeckEditor(props: DeckEditorProps) {
           collapses to a thin vertical rail that runs the full height of the
           deck container, in-flow (not fixed). */}
       {chatOpen ? (
-        <aside className="flex h-[calc(100vh-9rem)] min-h-[32rem] flex-col overflow-hidden rounded-lg border bg-card text-card-foreground shadow-sm lg:order-first">
+        <aside className="flex h-[calc(100vh-9rem)] min-h-[28rem] flex-col overflow-hidden rounded-lg border bg-card text-card-foreground shadow-sm lg:order-first">
           <div className="flex items-center justify-between gap-2 border-b px-3 py-2">
             <div className="flex items-center gap-2">
               <Sparkles className="h-4 w-4 text-primary" />
@@ -424,7 +428,7 @@ export function DeckEditor(props: DeckEditorProps) {
           type="button"
           aria-label="Expand AI Editor"
           onClick={() => toggleChat(true)}
-          className="group flex w-full items-center justify-center gap-2 overflow-hidden rounded-lg border bg-card py-2 text-muted-foreground shadow-sm transition-colors hover:bg-accent hover:text-foreground lg:order-first lg:h-[calc(100vh-9rem)] lg:min-h-[32rem] lg:flex-col lg:justify-between lg:py-3"
+          className="group flex w-full items-center justify-center gap-2 overflow-hidden rounded-lg border bg-card py-2 text-muted-foreground shadow-sm transition-colors hover:bg-accent hover:text-foreground lg:order-first lg:h-[calc(100vh-9rem)] lg:min-h-[28rem] lg:flex-col lg:justify-between lg:py-3"
         >
           <span className="flex items-center gap-2 lg:flex-col">
             <Sparkles className="h-4 w-4 text-primary" />
@@ -453,6 +457,8 @@ export function DeckEditor(props: DeckEditorProps) {
 // Main-area variants
 // ---------------------------------------------------------------------------
 
+type SlideMeta = { id: string; title: string | null; index: number };
+
 function CurrentPreview({
   deckSlug,
   headCommitSha,
@@ -460,18 +466,140 @@ function CurrentPreview({
   deckSlug: string;
   headCommitSha: string | null;
 }) {
+  const iframeRef = useRef<HTMLIFrameElement | null>(null);
+  const [slides, setSlides] = useState<SlideMeta[]>([]);
+  const [currentIdx, setCurrentIdx] = useState(0);
+  const [navOpen, setNavOpen] = useState(true);
+  const [commentsOpen, setCommentsOpen] = useState(false);
+  const [pinMode, setPinMode] = useState(false);
+
+  // postMessage helper -> iframe (origin-checked by the receiver).
+  const postToViewer = useCallback((msg: Record<string, unknown>) => {
+    const win = iframeRef.current?.contentWindow;
+    if (!win) return;
+    try {
+      win.postMessage(msg, window.location.origin);
+    } catch {
+      /* ignore — iframe may have navigated */
+    }
+  }, []);
+
+  // Reset transient slide state whenever the bundle changes (Accept ->
+  // headCommitSha bumps -> iframe remounts via key).
+  useEffect(() => {
+    setSlides([]);
+    setCurrentIdx(0);
+  }, [headCommitSha]);
+
+  // Listen for viewer-chrome messages so we can render the slide strip and
+  // counter from the actual bundled deck. Origin-locked.
+  useEffect(() => {
+    function onMsg(ev: MessageEvent) {
+      if (ev.origin !== window.location.origin) return;
+      const data = ev.data as { type?: string; slides?: SlideMeta[]; index?: number };
+      if (!data || typeof data !== 'object') return;
+      if (data.type === 'bip:ready' && Array.isArray(data.slides)) {
+        setSlides(data.slides);
+        setCurrentIdx(typeof data.index === 'number' ? data.index : 0);
+      } else if (data.type === 'bip:slide-change' && typeof data.index === 'number') {
+        setCurrentIdx(data.index);
+      } else if (data.type === 'bip:comments-state') {
+        setCommentsOpen(Boolean((data as { open?: boolean }).open));
+      } else if (data.type === 'bip:pin-state') {
+        setPinMode(Boolean((data as { on?: boolean }).on));
+      }
+    }
+    window.addEventListener('message', onMsg);
+    return () => window.removeEventListener('message', onMsg);
+  }, []);
+
+  const total = slides.length;
+  const canPrev = currentIdx > 0;
+  const canNext = currentIdx < total - 1;
+
+  const handleLoad = () => {
+    // Tell the viewer chrome a parent is hosting controls so it hides
+    // the overlay's floating buttons + sends an immediate bip:ready.
+    postToViewer({ type: 'bip:embed' });
+  };
+
   return (
-    <Card className="overflow-hidden p-0">
-      <div className="flex items-center justify-between gap-2 border-b px-3 py-2">
-        <span className="text-eyebrow">Preview</span>
-        <Button asChild variant="ghost" size="sm" className="h-7 gap-1.5 text-xs">
-          <a href={`/d/${deckSlug}`} target="_blank" rel="noreferrer">
-            Open in new tab
-            <ExternalLink className="h-3.5 w-3.5" />
-          </a>
-        </Button>
+    <Card className="flex h-[calc(100vh-9rem)] min-h-[28rem] flex-col overflow-hidden p-0">
+      {/* Toolbar: prev/next + slide counter + comments/pin + open external */}
+      <div className="flex flex-wrap items-center gap-2 border-b bg-primary/95 px-3 py-1.5 text-primary-foreground">
+        <span className="text-eyebrow opacity-90">Preview</span>
+        <div className="ml-1 flex items-center gap-0.5">
+          <Button
+            type="button"
+            variant="ghost"
+            size="icon"
+            aria-label="Previous slide"
+            disabled={!canPrev}
+            onClick={() => postToViewer({ type: 'bip:prev' })}
+            className="h-7 w-7 text-primary-foreground hover:bg-primary-foreground/15 hover:text-primary-foreground disabled:opacity-40"
+          >
+            <ChevronLeft className="h-4 w-4" />
+          </Button>
+          <Button
+            type="button"
+            variant="ghost"
+            size="icon"
+            aria-label="Next slide"
+            disabled={!canNext}
+            onClick={() => postToViewer({ type: 'bip:next' })}
+            className="h-7 w-7 text-primary-foreground hover:bg-primary-foreground/15 hover:text-primary-foreground disabled:opacity-40"
+          >
+            <ChevronRight className="h-4 w-4" />
+          </Button>
+        </div>
+        <span className="font-mono text-[11px] tabular-nums opacity-90">
+          {total === 0 ? '—' : `${currentIdx + 1} / ${total}`}
+        </span>
+        <div className="ml-auto flex items-center gap-1">
+          <Button
+            type="button"
+            variant="ghost"
+            size="sm"
+            aria-pressed={commentsOpen}
+            onClick={() => postToViewer({ type: 'bip:comments-toggle' })}
+            className={cn(
+              'h-7 gap-1.5 px-2 text-xs text-primary-foreground hover:bg-primary-foreground/15 hover:text-primary-foreground',
+              commentsOpen && 'bg-primary-foreground/20',
+            )}
+          >
+            <MessageSquare className="h-3.5 w-3.5" />
+            Comments
+          </Button>
+          <Button
+            type="button"
+            variant="ghost"
+            size="sm"
+            aria-pressed={pinMode}
+            onClick={() => postToViewer({ type: 'bip:pin-toggle' })}
+            className={cn(
+              'h-7 gap-1.5 px-2 text-xs text-primary-foreground hover:bg-primary-foreground/15 hover:text-primary-foreground',
+              pinMode && 'bg-primary-foreground/20',
+            )}
+          >
+            <MapPin className="h-3.5 w-3.5" />
+            Pin
+          </Button>
+          <Button
+            asChild
+            variant="ghost"
+            size="sm"
+            className="h-7 gap-1.5 px-2 text-xs text-primary-foreground hover:bg-primary-foreground/15 hover:text-primary-foreground"
+          >
+            <a href={`/d/${deckSlug}`} target="_blank" rel="noreferrer">
+              Open
+              <ExternalLink className="h-3.5 w-3.5" />
+            </a>
+          </Button>
+        </div>
       </div>
+
       <iframe
+        ref={iframeRef}
         // Both key and the query param change with the head sha: the key
         // forces a React remount, and the ?v={sha} bypasses the
         // /d/{slug} response's 60s private cache so the new commit's
@@ -479,8 +607,63 @@ function CurrentPreview({
         key={headCommitSha ?? 'empty'}
         src={`/d/${deckSlug}${headCommitSha ? `?v=${headCommitSha}` : ''}`}
         title="Deck preview"
-        className="h-[calc(100vh-12rem)] min-h-[32rem] w-full bg-background"
+        onLoad={handleLoad}
+        className="min-h-0 w-full flex-1 bg-background"
       />
+
+      {/* Footer: collapsible horizontal slide strip */}
+      {navOpen ? (
+        <div className="flex items-stretch gap-1 border-t bg-muted/40 px-2 py-1.5">
+          <Button
+            type="button"
+            variant="ghost"
+            size="icon"
+            aria-label="Hide slide list"
+            onClick={() => setNavOpen(false)}
+            className="h-8 w-7 shrink-0"
+          >
+            <ChevronDown className="h-4 w-4" />
+          </Button>
+          <ol className="flex min-w-0 flex-1 items-center gap-1.5 overflow-x-auto">
+            {slides.length === 0 ? (
+              <li className="text-xs text-muted-foreground">Loading slides…</li>
+            ) : (
+              slides.map((s, i) => {
+                const active = i === currentIdx;
+                return (
+                  <li key={s.id}>
+                    <button
+                      type="button"
+                      onClick={() => postToViewer({ type: 'bip:goto', slideId: s.id })}
+                      className={cn(
+                        'flex items-center gap-1.5 rounded-md border px-2 py-1 text-xs transition-colors',
+                        'max-w-[8rem] sm:max-w-[12rem]',
+                        active
+                          ? 'border-primary bg-primary text-primary-foreground'
+                          : 'border-border bg-card hover:bg-accent hover:text-accent-foreground',
+                      )}
+                      title={s.title ?? s.id}
+                    >
+                      <span className="font-mono text-[10px] opacity-75">{i + 1}</span>
+                      <span className="truncate">{s.title ?? s.id}</span>
+                    </button>
+                  </li>
+                );
+              })
+            )}
+          </ol>
+        </div>
+      ) : (
+        <button
+          type="button"
+          onClick={() => setNavOpen(true)}
+          aria-label="Show slide list"
+          className="flex items-center justify-center gap-1.5 border-t bg-muted/40 py-1 text-xs text-muted-foreground hover:bg-accent hover:text-foreground"
+        >
+          <ChevronUp className="h-3.5 w-3.5" />
+          Slides ({total || '—'})
+        </button>
+      )}
     </Card>
   );
 }
@@ -527,7 +710,7 @@ function ProposalPreview({
           <PreviewPane label="After" sha={proposed ?? null} deckSlug={deckSlug} />
         </div>
       ) : (
-        <div className="h-[calc(100vh-12rem)] min-h-[32rem] overflow-auto bg-background">
+        <div className="h-[calc(100vh-9rem)] min-h-[28rem] overflow-auto bg-background">
           <CodeDiff jobId={pending.job.id} />
         </div>
       )}
@@ -557,10 +740,10 @@ function PreviewPane({
           key={sha}
           src={`/d/${deckSlug}?at_commit=${sha}`}
           title={`${label} preview`}
-          className="h-[calc(100vh-13rem)] min-h-[28rem] w-full bg-background"
+          className="h-[calc(100vh-10rem)] min-h-[28rem] w-full bg-background"
         />
       ) : (
-        <div className="flex h-[calc(100vh-13rem)] min-h-[28rem] items-center justify-center text-xs text-muted-foreground">
+        <div className="flex h-[calc(100vh-10rem)] min-h-[28rem] items-center justify-center text-xs text-muted-foreground">
           Missing commit
         </div>
       )}

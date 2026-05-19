@@ -649,6 +649,15 @@ function boot() {
     if (raf) return;
     raf = requestAnimationFrame(function() { raf = 0; renderPinsForCurrentSlide(); });
   });
+  // Custom events from the viewer-chrome script (lib/decks/viewer-chrome.ts)
+  // — keeps the embedding contract centralized there. The overlay only
+  // reacts to two intents: toggle the panel, toggle pin mode.
+  document.addEventListener('bip:comments-toggle', function() {
+    setOpen(!panel.classList.contains('bip-open'));
+  });
+  document.addEventListener('bip:pin-toggle', function() {
+    setPinMode(!pinMode);
+  });
 }
 if (document.readyState === 'loading') {
   document.addEventListener('DOMContentLoaded', boot);
