@@ -102,7 +102,7 @@ export interface ConversationWithMessages {
 
 export async function getConversation(id: string): Promise<ConversationWithMessages> {
   const conversation = await prisma.aIConversation.findUnique({ where: { id } });
-  if (!conversation) {
+  if (!conversation || conversation.kind !== 'EDITOR') {
     throw new NotFoundError('Conversation not found', 'conversation_not_found');
   }
   const deck = await getDeckById(conversation.deckId);
@@ -123,7 +123,7 @@ export async function getConversation(id: string): Promise<ConversationWithMessa
  */
 export async function listConversationsForDeck(deckId: string): Promise<AIConversation[]> {
   return prisma.aIConversation.findMany({
-    where: { deckId },
+    where: { deckId, kind: 'EDITOR' },
     orderBy: { updatedAt: 'desc' },
   });
 }

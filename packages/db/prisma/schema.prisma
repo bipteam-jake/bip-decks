@@ -296,19 +296,32 @@ enum JobStatus {
 }
 
 model AIConversation {
-  id          String   @id @default(uuid()) @db.Uuid
-  deckId      String   @map("deck_id") @db.Uuid
-  createdById String   @map("created_by_id") @db.Uuid
+  id          String             @id @default(uuid()) @db.Uuid
+  deckId      String             @map("deck_id") @db.Uuid
+  createdById String             @map("created_by_id") @db.Uuid
+  // EDITOR: per-slide AI edit chat (Phase 1). OUTLINE: outline-first deck
+  // creation conversation (Phase 2.5). The editor UI filters to EDITOR only.
+  kind        AIConversationKind @default(EDITOR)
   title       String?
-  createdAt   DateTime @default(now()) @map("created_at")
-  updatedAt   DateTime @updatedAt @map("updated_at")
+  // For OUTLINE conversations: timestamp when the user clicked "Approve"
+  // and slide stubs were scaffolded into the deck. Null = still draft.
+  // EDITOR conversations never set this.
+  approvedAt  DateTime?          @map("approved_at")
+  createdAt   DateTime           @default(now()) @map("created_at")
+  updatedAt   DateTime           @updatedAt @map("updated_at")
 
   deck      Deck        @relation(fields: [deckId], references: [id], onDelete: Cascade)
   createdBy User        @relation(fields: [createdById], references: [id])
   messages  AIMessage[]
 
   @@index([deckId])
+  @@index([deckId, kind])
   @@map("ai_conversations")
+}
+
+enum AIConversationKind {
+  EDITOR
+  OUTLINE
 }
 
 model AIMessage {
