@@ -351,10 +351,13 @@ The schema is designed to be richer than the dashboard. New charts and views can
 Deferred to later planning conversations:
 
 - **Element-level commenting mechanics.** Figma-style pin-on-canvas is the target UX. Hit testing on slide elements, anchor coordinates in scaled iframe, persistence across slide edits, UI for placing and resolving pins. Needs UX prototyping plus technical design.
-- **Outline-first generation flow.** Conversational structure for the outline stage, deliverable shape (manifest + slide stubs), handoff to draft stage. Important — this is a core differentiator of the platform.
 - **Notification system.** Email digests for clients on new comments, in-app notifications for team members on @-mentions and assignments. Scope, channels, throttling rules.
 - **PDF export visual fidelity.** Headless Chromium at 1280×720 works for most cases but interactive elements and animations need a fallback rendering strategy.
 - **Data model.** Concrete Postgres schema for the entities in this doc. Next planning conversation.
+
+**Resolved (shipped in Phase 2.5):**
+
+- **Outline-first generation flow.** A second `AIConversationKind = OUTLINE` was added alongside `EDITOR`. The flow runs synchronously (no queue): user fills a brief (title, audience, goal, talking points + optional tone / target slide count) in the new-deck dialog; the API creates the deck and an outline conversation seeded with the brief as the first user message, then immediately runs the first Claude turn. Claude responds with one of three JSON payload shapes: `outline` (always the full slide set, never partial — id `s1..sN`, title, narrative notes, optional layoutHint + dataPoints), `question` (clarifying), or `message` (free text). The user iterates in `/decks/[id]/outline`; on **Approve** the service scaffolds one HTML stub per slide (title rendered in `<h1>`, notes + dataPoints preserved as an HTML comment for the editor stage to pick up later), rewrites `deck.json`, commits on `main`, advances `lifecycleStage` to DRAFT, and stamps `approvedAt` on the conversation. One outline conversation per deck, one approval per conversation. See `apps/web/lib/outline/service.ts` and `packages/ai-gateway/src/index.ts` (`generateOutlineTurn`).
 
 ---
 
