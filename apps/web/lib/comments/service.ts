@@ -19,6 +19,7 @@ import { z } from 'zod';
 
 import { prisma } from '@/lib/prisma';
 import { ForbiddenError, NotFoundError, ValidationError } from '@/lib/errors';
+import { syncCommentMentions } from '@/lib/comments/mentions-service';
 import type { CommentViewer } from '@/lib/comments/viewer';
 import { Prisma, type Comment, type CommentStatus, type Vote } from '@bip/db';
 
@@ -231,6 +232,16 @@ export async function createComment(input: CreateCommentInput): Promise<Comment>
           : Prisma.JsonNull,
       ...authorFields,
     },
+  }).then(async (created) => {
+    // Sync @mention rows after the comment is committed. Failures here
+    // shouldn't undo the comment write (mentions are best-effort
+    // notifications), so we swallow + log via the thrown error chain.
+    await syncCommentMentions({
+      commentId: created.id,
+      body: created.body,
+      authorUserId: created.authorUserId,
+    });
+    return created;
   });
 }
 
@@ -268,7 +279,7 @@ export async function updateCommentStatus(input: UpdateStatusInput): Promise<Com
   });
   if (!existing) throw new NotFoundError('Comment not found');
 
-  return prisma.comment.update({
+  const updated = await prisma.comment.update({
     where: { id: input.commentId },
     data: {
       ...(input.status !== undefined ? { status: input.status } : {}),
@@ -276,6 +287,18 @@ export async function updateCommentStatus(input: UpdateStatusInput): Promise<Com
       ...(input.adminNote !== undefined ? { adminNote: input.adminNote } : {}),
     },
   });
+  // Re-sync mentions when the adminNote changed — admin-note mentions
+  // also land in the mentioned user's inbox (phasing §3 item 2: "in a
+  // comment or admin note").
+  if (input.adminNote !== undefined) {
+    await syncCommentMentions({
+      commentId: updated.id,
+      body: updated.body,
+      adminNote: updated.adminNote,
+      authorUserId: updated.authorUserId,
+    });
+  }
+  return updated;
 }
 
 // ---------------------------------------------------------------------------

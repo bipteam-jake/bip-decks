@@ -40,6 +40,7 @@ model User {
   brandKitsCreated    BrandKit[]        @relation("BrandKitCreator")
   brandKitVersions    BrandKitVersion[] @relation("BrandKitVersionPublisher")
   brandKitPatterns    BrandKitPattern[] @relation("BrandKitPatternCreator")
+  mentions            CommentMention[]  @relation("CommentMentionMentioned")
 
   @@map("users")
 }
@@ -145,6 +146,7 @@ model Comment {
   parent          Comment?            @relation("CommentReplies", fields: [parentId], references: [id], onDelete: Cascade)
   replies         Comment[]           @relation("CommentReplies")
   votes           Vote[]
+  mentions        CommentMention[]
 
   @@index([deckId, slideId])
   @@index([deckId, status])
@@ -176,6 +178,26 @@ model Vote {
   @@unique([commentId, recipientId])
   @@index([commentId])
   @@map("votes")
+}
+
+// Phase 2.4 — @mentions inbox. A row exists once per (comment, mentioned
+// user) pair. Re-parsed on every comment write (createComment and
+// updateCommentStatus → adminNote): rows for users no longer mentioned in
+// the comment body/note get removed; new ones get inserted. `readAt` is
+// per-row so the mentioned user can dismiss individually or mark-all-read.
+model CommentMention {
+  id              String    @id @default(uuid()) @db.Uuid
+  commentId       String    @map("comment_id") @db.Uuid
+  mentionedUserId String    @map("mentioned_user_id") @db.Uuid
+  createdAt       DateTime  @default(now()) @map("created_at")
+  readAt          DateTime? @map("read_at")
+
+  comment       Comment @relation(fields: [commentId], references: [id], onDelete: Cascade)
+  mentionedUser User    @relation("CommentMentionMentioned", fields: [mentionedUserId], references: [id], onDelete: Cascade)
+
+  @@unique([commentId, mentionedUserId])
+  @@index([mentionedUserId, readAt])
+  @@map("comment_mentions")
 }
 
 // ---------------------------------------------------------------------------

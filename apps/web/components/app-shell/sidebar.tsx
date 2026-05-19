@@ -4,7 +4,7 @@ import * as React from 'react';
 import Link from 'next/link';
 import Image from 'next/image';
 import { usePathname } from 'next/navigation';
-import { Cog, FolderKanban, Menu as MenuIcon, Palette, Users } from 'lucide-react';
+import { Cog, FolderKanban, Inbox, Menu as MenuIcon, Palette, Users } from 'lucide-react';
 
 import { cn } from '@/lib/utils';
 import { Button } from '@/components/ui/button';
@@ -13,6 +13,7 @@ import { Sheet, SheetContent, SheetTitle, SheetTrigger } from '@/components/ui/s
 
 const SIDEBAR_ICONS = {
   decks: FolderKanban,
+  inbox: Inbox,
   brandKits: Palette,
   users: Users,
   settings: Cog,
@@ -32,6 +33,7 @@ const SECTIONS: SidebarSection[] = [
     title: 'Workspace',
     links: [
       { href: '/decks', label: 'Decks', iconKey: 'decks' },
+      { href: '/inbox', label: 'Inbox', iconKey: 'inbox' },
       { href: '/brand-kits', label: 'Brand kits', iconKey: 'brandKits' },
     ],
   },
@@ -62,6 +64,7 @@ function SidebarBrand() {
 
 function SidebarNav({ onNavigate, className }: { onNavigate?: () => void; className?: string }) {
   const pathname = usePathname();
+  const unread = useInboxUnread(pathname);
   return (
     <nav className={cn('p-3 text-sm', className)}>
       {SECTIONS.map((section) => (
@@ -71,6 +74,7 @@ function SidebarNav({ onNavigate, className }: { onNavigate?: () => void; classN
             {section.links.map((link) => {
               const Icon = SIDEBAR_ICONS[link.iconKey];
               const active = pathname === link.href || pathname?.startsWith(link.href + '/');
+              const showBadge = link.iconKey === 'inbox' && unread > 0;
               return (
                 <li key={link.href}>
                   <Link
@@ -92,6 +96,14 @@ function SidebarNav({ onNavigate, className }: { onNavigate?: () => void; classN
                     ) : null}
                     <Icon className="h-4 w-4 shrink-0" />
                     <span className="truncate">{link.label}</span>
+                    {showBadge && (
+                      <span
+                        className="ml-auto inline-flex h-5 min-w-[1.25rem] items-center justify-center rounded-full bg-primary px-1.5 text-[10px] font-semibold text-primary-foreground"
+                        aria-label={`${unread} unread mentions`}
+                      >
+                        {unread > 99 ? '99+' : unread}
+                      </span>
+                    )}
                   </Link>
                 </li>
               );
@@ -101,6 +113,39 @@ function SidebarNav({ onNavigate, className }: { onNavigate?: () => void; classN
       ))}
     </nav>
   );
+}
+
+// Lightweight unread-mentions poll. Re-fetches on every pathname change
+// (cheap: a server-rendered admin nav nav happens after each route
+// transition anyway). 30s background refresh keeps the badge fresh
+// without WebSockets.
+function useInboxUnread(pathname: string | null): number {
+  const [count, setCount] = React.useState(0);
+  React.useEffect(() => {
+    let cancelled = false;
+    const fetchCount = async () => {
+      try {
+        const res = await fetch('/api/inbox?unread=1&limit=1', {
+          cache: 'no-store',
+          credentials: 'same-origin',
+        });
+        if (!res.ok) return;
+        const body = (await res.json()) as { unreadCount?: number };
+        if (!cancelled && typeof body.unreadCount === 'number') {
+          setCount(body.unreadCount);
+        }
+      } catch {
+        /* swallow — badge is non-critical */
+      }
+    };
+    void fetchCount();
+    const id = window.setInterval(fetchCount, 30_000);
+    return () => {
+      cancelled = true;
+      window.clearInterval(id);
+    };
+  }, [pathname]);
+  return count;
 }
 
 export function Sidebar() {
