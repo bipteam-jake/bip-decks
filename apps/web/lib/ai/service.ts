@@ -153,6 +153,20 @@ export interface PostMessageInput {
    * the rest.
    */
   supersedePending?: boolean;
+  /**
+   * Opt into the full model output budget (~64K tokens) for very large
+   * edits. Default is the high-but-not-max 32K cap. The UI sets this when
+   * the user retries after a `truncated` failure.
+   */
+  expandedBudget?: boolean;
+  /**
+   * Editing scope set by the user in the composer toggle.
+   *   - 'slide': Claude must only modify the currentSlideId's HTML.
+   *   - 'deck' (default): Claude may touch any slide / global CSS.
+   * Only enforced via a hard rule appended to the user-turn content; the
+   * response parser still rejects any change outside the deck repo.
+   */
+  scope?: 'slide' | 'deck';
 }
 
 export interface PostMessageResult {
@@ -334,9 +348,13 @@ export async function postUserMessage(input: PostMessageInput): Promise<PostMess
   // 3. Assemble the Claude messages array. Historical messages first, then
   //    the new user message with the deck_state block prepended.
   const history = buildHistory(messages);
+  const scopeRule =
+    input.scope === 'slide'
+      ? `\n\nSCOPE: Only modify slides/${currentSlideId}.html for this turn. Do NOT propose changes to any other slide file, styles/global.css, scripts/global.js, or deck.json. If the request implies edits outside that file, ask a clarifying question instead of editing.`
+      : '';
   const currentTurn: ClaudeMessage = {
     role: 'user',
-    content: `${deckState}\n\n${input.text}`,
+    content: `${deckState}\n\n${input.text}${scopeRule}`,
   };
   const claudeMessages = [...history, currentTurn];
 
@@ -351,15 +369,25 @@ export async function postUserMessage(input: PostMessageInput): Promise<PostMess
 
   try {
     const systemPrompt = await assembleSystemPrompt(deck.brandKitVersionId);
+    // Slide HTML "full new file content" is regularly several thousand
+    // tokens per slide, and a single turn can rewrite multiple slides.
+    // Default to a high 32K budget; the UI can request the full ~64K cap
+    // via `expandedBudget` after a truncation. Timeout scales with budget.
+    const maxTokens = input.expandedBudget ? 64_000 : 32_000;
+    const timeoutMs = input.expandedBudget ? 300_000 : 180_000;
     const response = await callClaude(claudeMessages, systemPrompt, {
       requestId: input.requestId,
+      maxTokens,
+      timeoutMs,
     });
     model = response.model;
     tokensIn = response.tokensIn;
     tokensOut = response.tokensOut;
     costCents = response.costCents;
 
-    const parseResult = parseClaudeResponse(response.content);
+    const parseResult = parseClaudeResponse(response.content, {
+      stopReason: response.stopReason,
+    });
     if (parseResult.ok) {
       parsedResponse = parseResult.value;
       assistantContent = {
@@ -368,6 +396,21 @@ export async function postUserMessage(input: PostMessageInput): Promise<PostMess
         parsed: parseResult.value,
       };
     } else {
+      // Log enough to debug recurring parse failures without leaking the
+      // full model output to the user.
+      // eslint-disable-next-line no-console
+      console.error(
+        JSON.stringify({
+          scope: 'ai-editor',
+          event: 'parse_failure',
+          conversationId: conversation.id,
+          requestId: input.requestId ?? null,
+          failureKind: parseResult.failure.kind,
+          stopReason: response.stopReason,
+          rawLength: response.content.length,
+          rawPreview: response.content.slice(0, 400),
+        }),
+      );
       assistantContent = {
         kind: 'assistant_error',
         raw: response.content,

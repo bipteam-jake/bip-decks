@@ -29,6 +29,8 @@ export type AIEditChange = z.infer<typeof ChangeSchema>;
 export type ParseFailure =
   /** Couldn't even JSON.parse the body. */
   | { kind: 'invalid_json'; message: string }
+  /** Anthropic stop_reason was max_tokens — the JSON is almost certainly cut off. */
+  | { kind: 'truncated'; message: string }
   /** Parsed but didn't match the schema. */
   | { kind: 'schema'; message: string; issues: unknown }
   /** Parsed and schema-valid but violated a structural rule (path, etc.). */
@@ -40,18 +42,83 @@ export type ParseResult =
 
 /**
  * Best-effort JSON extraction. Claude is told never to wrap output in code
- * fences, but in practice it sometimes does. We strip a leading/trailing
- * ```json fence if present; otherwise feed the raw string to JSON.parse.
+ * fences or add prose, but in practice it sometimes does. We try, in order:
+ *   1. Parse the trimmed raw string verbatim.
+ *   2. Strip a leading/trailing ```json … ``` fence and retry.
+ *   3. Find the first `{` and walk the string brace-counted (respecting
+ *      strings + escapes) to locate the matching `}`. Parse that slice.
+ * If everything fails we return the last parse error so callers can log it.
  */
 function tryParseJson(raw: string): { ok: true; value: unknown } | { ok: false; message: string } {
   const trimmed = raw.trim();
-  const fenceMatch = trimmed.match(/^```(?:json)?\s*([\s\S]*?)\s*```$/);
-  const candidate = fenceMatch ? fenceMatch[1]! : trimmed;
+
+  // 1. Verbatim.
   try {
-    return { ok: true, value: JSON.parse(candidate) };
+    return { ok: true, value: JSON.parse(trimmed) };
+  } catch {
+    /* fall through */
+  }
+
+  // 2. Strip code fences (anywhere in the string, not just bounding).
+  const fenceMatch = trimmed.match(/```(?:json)?\s*([\s\S]*?)\s*```/);
+  if (fenceMatch && fenceMatch[1]) {
+    try {
+      return { ok: true, value: JSON.parse(fenceMatch[1]) };
+    } catch {
+      /* fall through */
+    }
+  }
+
+  // 3. Locate the first `{` and find its matching `}` via brace counting.
+  //    This rescues responses where Claude prepended prose like
+  //    "Here's the JSON:" or appended a trailing note.
+  const sliced = extractFirstJsonObject(trimmed);
+  if (sliced) {
+    try {
+      return { ok: true, value: JSON.parse(sliced) };
+    } catch (err) {
+      return { ok: false, message: (err as Error).message };
+    }
+  }
+
+  // Nothing parsed — return a deterministic error.
+  try {
+    JSON.parse(trimmed);
   } catch (err) {
     return { ok: false, message: (err as Error).message };
   }
+  return { ok: false, message: 'no JSON object found' };
+}
+
+/** Walk a string from the first `{` to its matching `}`, respecting strings + escapes. */
+function extractFirstJsonObject(s: string): string | null {
+  const start = s.indexOf('{');
+  if (start === -1) return null;
+  let depth = 0;
+  let inString = false;
+  let escape = false;
+  for (let i = start; i < s.length; i++) {
+    const ch = s[i]!;
+    if (escape) {
+      escape = false;
+      continue;
+    }
+    if (ch === '\\' && inString) {
+      escape = true;
+      continue;
+    }
+    if (ch === '"') {
+      inString = !inString;
+      continue;
+    }
+    if (inString) continue;
+    if (ch === '{') depth++;
+    else if (ch === '}') {
+      depth--;
+      if (depth === 0) return s.slice(start, i + 1);
+    }
+  }
+  return null;
 }
 
 function checkPath(file: string): string | null {
@@ -90,9 +157,23 @@ function checkRules(response: AIEditResponse): ParseFailure | null {
   return null;
 }
 
-export function parseClaudeResponse(raw: string): ParseResult {
+export interface ParseOptions {
+  /** Anthropic stop_reason — if 'max_tokens', a JSON parse failure is almost certainly truncation. */
+  stopReason?: string | null;
+}
+
+export function parseClaudeResponse(raw: string, options: ParseOptions = {}): ParseResult {
   const parsed = tryParseJson(raw);
   if (!parsed.ok) {
+    if (options.stopReason === 'max_tokens') {
+      return {
+        ok: false,
+        failure: {
+          kind: 'truncated',
+          message: `stop_reason=max_tokens; raw length=${raw.length}`,
+        },
+      };
+    }
     return { ok: false, failure: { kind: 'invalid_json', message: parsed.message } };
   }
   const schema = ResponseSchema.safeParse(parsed.value);
@@ -119,6 +200,8 @@ export function failureToUserMessage(failure: ParseFailure): string {
   switch (failure.kind) {
     case 'invalid_json':
       return "I had trouble understanding the model's response. Try rephrasing?";
+    case 'truncated':
+      return "Claude's reply was cut off — the edit was bigger than the token budget. Click Retry with max budget to try again with the full ~64K-token cap, or split the request into smaller changes.";
     case 'schema':
       return "The model's response wasn't in the expected format. Try rephrasing?";
     case 'rule':

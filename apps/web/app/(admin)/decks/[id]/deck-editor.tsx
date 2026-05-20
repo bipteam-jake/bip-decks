@@ -20,6 +20,7 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { useRouter } from 'next/navigation';
 import dynamic from 'next/dynamic';
+import { toast } from 'sonner';
 import {
   Check,
   ChevronLeft,
@@ -30,8 +31,10 @@ import {
   Lock as LockIcon,
   MapPin,
   MessageSquare,
+  RefreshCw,
   Send as SendIcon,
   Sparkles,
+  X,
 } from 'lucide-react';
 
 import type { AIConversation, AIMessage, Job } from '@bip/db';
@@ -69,6 +72,21 @@ type AssistantErrContent = {
   error: unknown;
 };
 type MessageContent = UserContent | AssistantOkContent | AssistantErrContent;
+
+/** Narrow the opaque `error` blob to its parser-failure kind, when present. */
+function getErrorKind(c: MessageContent): string | null {
+  if (c.kind !== 'assistant_error') return null;
+  const e = c.error;
+  if (
+    e &&
+    typeof e === 'object' &&
+    'kind' in e &&
+    typeof (e as { kind: unknown }).kind === 'string'
+  ) {
+    return (e as { kind: string }).kind;
+  }
+  return null;
+}
 
 function asContent(value: unknown): MessageContent {
   return value as MessageContent;
@@ -111,6 +129,16 @@ export function DeckEditor(props: DeckEditorProps) {
   const [lock, setLock] = useState<LockState | null>(null);
   const [accepting, setAccepting] = useState<string | null>(null);
   const [rejecting, setRejecting] = useState<string | null>(null);
+  // Optimistic "in-flight turn" — we show the user's message bubble and a
+  // "Claude is editing…" thinking bubble the instant they hit send, before
+  // the server response lands. `pendingStartedAt` powers the elapsed timer
+  // in the thinking bubble so a 30-second turn doesn't feel like a freeze.
+  const [pendingText, setPendingText] = useState<string | null>(null);
+  const [pendingStartedAt, setPendingStartedAt] = useState<number | null>(null);
+  // AbortController for the in-flight POST so the user can cancel a slow turn.
+  const sendAbortRef = useRef<AbortController | null>(null);
+  // Last user message we attempted, so an error bubble can offer a Retry.
+  const lastUserTextRef = useRef<string>('');
   // Local view of deck head. Props refresh lags behind the accept response
   // because router.refresh() is async; tracking it here lets us cache-bust
   // the preview iframe immediately so the new commit's HTML is visible
@@ -118,6 +146,14 @@ export function DeckEditor(props: DeckEditorProps) {
   // private, max-age=60 — without a URL bump the browser would re-use the
   // pre-edit bytes).
   const [headCommitSha, setHeadCommitSha] = useState<string | null>(props.deck.headCommitSha);
+  // Currently-focused slide in the live preview iframe — driven by
+  // bip:ready / bip:slide-change postMessages from CurrentPreview. Used
+  // both as `currentSlideId` for the AI turn (so context.ts focuses on
+  // it) and to enable the "This slide" scope toggle.
+  const [currentSlideId, setCurrentSlideId] = useState<string | null>(null);
+  // Scope toggle. Defaults to 'slide' so the user has to opt in to
+  // multi-slide edits — issue 2 in deck-editor UX feedback.
+  const [scope, setScope] = useState<'slide' | 'deck'>('slide');
 
   // Derive the latest pending proposal from messages + jobs. A message has a
   // proposal if its content.kind === 'assistant' AND jobs[relatedJobId] is
@@ -207,24 +243,48 @@ export function DeckEditor(props: DeckEditorProps) {
   }, [conversation, props.deck.id]);
 
   const send = useCallback(
-    async (text: string, supersedePending: boolean): Promise<void> => {
-      if (!text.trim()) return;
+    async (text: string, supersedePending: boolean, expandedBudget = false): Promise<void> => {
+      const trimmed = text.trim();
+      if (!trimmed) return;
+      // Optimistic UI: clear the composer immediately (matches Claude/ChatGPT
+      // muscle memory) and show the user bubble + thinking bubble right away.
+      lastUserTextRef.current = trimmed;
+      setInput('');
+      setPendingText(trimmed);
+      setPendingStartedAt(Date.now());
       setSending(true);
       setError(null);
+      const controller = new AbortController();
+      sendAbortRef.current = controller;
       try {
         const convo = await ensureConversation();
+        // Only send currentSlideId when the user picked 'this slide'
+        // scope; otherwise let the server pick the default slide for
+        // context. `scope: 'slide'` triggers the hard rule on the
+        // server (see lib/ai/service.ts).
+        const effectiveScope = scope === 'slide' && currentSlideId ? 'slide' : 'deck';
         const res = await fetch(`/api/ai/conversations/${convo.id}/messages`, {
           method: 'POST',
           headers: { 'content-type': 'application/json' },
-          body: JSON.stringify({ text, supersedePending }),
+          body: JSON.stringify({
+            text: trimmed,
+            supersedePending,
+            expandedBudget,
+            scope: effectiveScope,
+            currentSlideId: currentSlideId ?? undefined,
+          }),
+          signal: controller.signal,
         });
         if (res.status === 409) {
           const body = await res.json().catch(() => null);
           if (body?.error?.code === 'pending_proposal') {
+            // Restore the input so the user can confirm the supersede dialog.
+            setInput(trimmed);
             setConfirmSupersede(true);
             return;
           }
           if (body?.error?.code === 'deck_locked') {
+            setInput(trimmed);
             setLock({
               heldByOther: true,
               ownerUserId: body.error.details?.ownerUserId ?? null,
@@ -235,12 +295,16 @@ export function DeckEditor(props: DeckEditorProps) {
             });
             return;
           }
-          setError(body?.error?.message ?? `Request failed (${res.status})`);
+          const msg = body?.error?.message ?? `Request failed (${res.status})`;
+          setError(msg);
+          toast.error(msg);
           return;
         }
         if (!res.ok) {
           const body = await res.json().catch(() => null);
-          setError(body?.error?.message ?? `Request failed (${res.status})`);
+          const msg = body?.error?.message ?? `Request failed (${res.status})`;
+          setError(msg);
+          toast.error(msg);
           return;
         }
         const result = (await res.json()) as {
@@ -249,11 +313,7 @@ export function DeckEditor(props: DeckEditorProps) {
           job: Job | null;
           supersededJobIds: string[];
         };
-        setMessages((prev) => {
-          // Drop any local-superseded jobs from being shown as pending —
-          // jobs map update below also flips their status.
-          return [...prev, result.userMessage, result.assistantMessage];
-        });
+        setMessages((prev) => [...prev, result.userMessage, result.assistantMessage]);
         setJobs((prev) => {
           const next = { ...prev };
           // Mark superseded jobs as canceled locally so the pending-derive
@@ -265,16 +325,76 @@ export function DeckEditor(props: DeckEditorProps) {
           if (result.job) next[result.job.id] = result.job;
           return next;
         });
-        setInput('');
         setConfirmSupersede(false);
+        if (result.job && result.job.status === 'AWAITING_REVIEW') {
+          toast.success('Proposal ready', { description: 'Review the diff and Accept or Reject.' });
+        }
       } catch (err) {
-        setError((err as Error).message);
+        if ((err as Error).name === 'AbortError') {
+          // Surface the canceled turn as an inline error bubble so the user
+          // can retry without losing what they wrote. We don't persist this
+          // server-side — the request never reached the backend handler
+          // beyond the open socket.
+          toast('Canceled');
+          // Push a synthetic assistant_error message into the list so it's
+          // visible alongside real history. Use a stable id prefix the
+          // server will never collide with.
+          setMessages((prev) => [
+            ...prev,
+            {
+              id: `client-cancel-${Date.now()}`,
+              conversationId: '',
+              role: 'ASSISTANT',
+              content: {
+                kind: 'assistant_error',
+                raw: '',
+                userMessage: 'Canceled before the model responded.',
+                error: { kind: 'gateway', message: 'aborted by user' },
+              },
+              model: null,
+              tokensIn: null,
+              tokensOut: null,
+              costCents: null,
+              relatedJobId: null,
+              createdAt: new Date(),
+            } as unknown as AIMessage,
+          ]);
+          setInput(trimmed);
+          return;
+        }
+        const msg = (err as Error).message;
+        setError(msg);
+        toast.error(msg);
       } finally {
         setSending(false);
+        setPendingText(null);
+        setPendingStartedAt(null);
+        sendAbortRef.current = null;
       }
     },
-    [ensureConversation],
+    [ensureConversation, scope, currentSlideId],
   );
+
+  const cancelSend = useCallback(() => {
+    sendAbortRef.current?.abort();
+  }, []);
+
+  const retryLastUser = useCallback(() => {
+    const text = lastUserTextRef.current;
+    if (!text) return;
+    // If the last failure was a truncation, auto-bump to the full token
+    // budget so the retry actually has room to finish. Otherwise a plain
+    // retry is fine — transient errors don't need extra budget.
+    const last = messages[messages.length - 1];
+    const lastKind = last ? getErrorKind(asContent(last.content)) : null;
+    const expanded = lastKind === 'truncated';
+    if (expanded) {
+      toast('Retrying with max token budget', {
+        description: 'This can take a couple of minutes.',
+      });
+    }
+    void send(text, false, expanded);
+  }, [send, messages]);
 
   // -------------------------------------------------------------------------
   // Accept / reject
@@ -408,6 +528,10 @@ export function DeckEditor(props: DeckEditorProps) {
             rejecting={rejecting}
             onAccept={accept}
             onReject={reject}
+            pendingText={pendingText}
+            pendingStartedAt={pendingStartedAt}
+            onRetry={retryLastUser}
+            onUseSuggestion={(text) => setInput(text)}
           />
 
           <Composer
@@ -418,9 +542,13 @@ export function DeckEditor(props: DeckEditorProps) {
             confirmSupersede={confirmSupersede}
             onCancelSupersede={() => setConfirmSupersede(false)}
             onSend={(supersede) => void send(input, supersede)}
+            onCancel={cancelSend}
             error={error}
             brandKitId={props.deck.brandKitId}
             brandKitVersionId={props.deck.brandKitVersionId}
+            scope={scope}
+            onScopeChange={setScope}
+            currentSlideId={currentSlideId}
           />
         </aside>
       ) : (
@@ -446,7 +574,11 @@ export function DeckEditor(props: DeckEditorProps) {
         {pending ? (
           <ProposalPreview deckSlug={props.deck.slug} pending={pending} />
         ) : (
-          <CurrentPreview deckSlug={props.deck.slug} headCommitSha={headCommitSha} />
+          <CurrentPreview
+            deckSlug={props.deck.slug}
+            headCommitSha={headCommitSha}
+            onCurrentSlideChange={setCurrentSlideId}
+          />
         )}
       </section>
     </div>
@@ -462,9 +594,11 @@ type SlideMeta = { id: string; title: string | null; index: number };
 function CurrentPreview({
   deckSlug,
   headCommitSha,
+  onCurrentSlideChange,
 }: {
   deckSlug: string;
   headCommitSha: string | null;
+  onCurrentSlideChange?: (slideId: string | null) => void;
 }) {
   const iframeRef = useRef<HTMLIFrameElement | null>(null);
   const [slides, setSlides] = useState<SlideMeta[]>([]);
@@ -496,13 +630,24 @@ function CurrentPreview({
   useEffect(() => {
     function onMsg(ev: MessageEvent) {
       if (ev.origin !== window.location.origin) return;
-      const data = ev.data as { type?: string; slides?: SlideMeta[]; index?: number };
+      // Ignore messages from any other iframe (e.g. proposal preview panes).
+      if (ev.source !== iframeRef.current?.contentWindow) return;
+      const data = ev.data as {
+        type?: string;
+        slides?: SlideMeta[];
+        index?: number;
+        slideId?: string;
+      };
       if (!data || typeof data !== 'object') return;
       if (data.type === 'bip:ready' && Array.isArray(data.slides)) {
         setSlides(data.slides);
-        setCurrentIdx(typeof data.index === 'number' ? data.index : 0);
+        const idx = typeof data.index === 'number' ? data.index : 0;
+        setCurrentIdx(idx);
+        onCurrentSlideChange?.(data.slides[idx]?.id ?? null);
       } else if (data.type === 'bip:slide-change' && typeof data.index === 'number') {
         setCurrentIdx(data.index);
+        const id = typeof data.slideId === 'string' ? data.slideId : null;
+        onCurrentSlideChange?.(id);
       } else if (data.type === 'bip:comments-state') {
         setCommentsOpen(Boolean((data as { open?: boolean }).open));
       } else if (data.type === 'bip:pin-state') {
@@ -511,7 +656,7 @@ function CurrentPreview({
     }
     window.addEventListener('message', onMsg);
     return () => window.removeEventListener('message', onMsg);
-  }, []);
+  }, [onCurrentSlideChange]);
 
   const total = slides.length;
   const canPrev = currentIdx > 0;
@@ -683,6 +828,33 @@ function ProposalPreview({
   const base = output?.baseCommitSha;
   const proposed = output?.proposedCommitSha;
 
+  // Derive the list of slide ids that this proposal touches by walking the
+  // job input's `changes` array (set in lib/ai/proposal.ts when the
+  // proposal is built). We use this to land both preview iframes on the
+  // first changed slide and let the user step through the rest.
+  const changedSlideIds = useMemo(() => {
+    const input = (pending.job.input ?? null) as {
+      changes?: Array<{ file?: string }>;
+    } | null;
+    const ids: string[] = [];
+    for (const c of input?.changes ?? []) {
+      const m = typeof c.file === 'string' ? c.file.match(/^slides\/([^/]+)\.html$/) : null;
+      if (m && m[1] && !ids.includes(m[1])) ids.push(m[1]);
+    }
+    return ids;
+  }, [pending.job.input, pending.job.id]);
+
+  const [navIdx, setNavIdx] = useState(0);
+  // Reset to slide 0 whenever the pending proposal changes.
+  useEffect(() => {
+    setNavIdx(0);
+  }, [pending.job.id]);
+
+  const total = changedSlideIds.length;
+  const targetSlideId = total > 0 ? (changedSlideIds[Math.min(navIdx, total - 1)] ?? null) : null;
+  const canPrev = navIdx > 0;
+  const canNext = navIdx < total - 1;
+
   return (
     <Card className="overflow-hidden p-0">
       <div className="flex flex-wrap items-center justify-between gap-2 border-b px-3 py-2">
@@ -693,6 +865,40 @@ function ProposalPreview({
           </Badge>
           <span className="text-xs text-muted-foreground">review before accepting</span>
         </div>
+        {total > 0 && tab === 'visual' && (
+          <div className="flex items-center gap-1">
+            <Button
+              type="button"
+              variant="ghost"
+              size="icon"
+              aria-label="Previous changed slide"
+              disabled={!canPrev}
+              onClick={() => setNavIdx((i) => Math.max(0, i - 1))}
+              className="h-7 w-7"
+            >
+              <ChevronLeft className="h-4 w-4" />
+            </Button>
+            <span className="font-mono text-[11px] tabular-nums text-muted-foreground">
+              {navIdx + 1} / {total} changed
+            </span>
+            <Button
+              type="button"
+              variant="ghost"
+              size="icon"
+              aria-label="Next changed slide"
+              disabled={!canNext}
+              onClick={() => setNavIdx((i) => Math.min(total - 1, i + 1))}
+              className="h-7 w-7"
+            >
+              <ChevronRight className="h-4 w-4" />
+            </Button>
+            {targetSlideId && (
+              <span className="ml-1 font-mono text-[11px] text-muted-foreground">
+                {targetSlideId}
+              </span>
+            )}
+          </div>
+        )}
         <Tabs value={tab} onValueChange={(v) => setTab(v as 'visual' | 'code')}>
           <TabsList className="h-8">
             <TabsTrigger value="visual" className="text-xs">
@@ -706,8 +912,18 @@ function ProposalPreview({
       </div>
       {tab === 'visual' ? (
         <div className="grid grid-cols-1 gap-px bg-border sm:grid-cols-2">
-          <PreviewPane label="Before" sha={base ?? null} deckSlug={deckSlug} />
-          <PreviewPane label="After" sha={proposed ?? null} deckSlug={deckSlug} />
+          <PreviewPane
+            label="Before"
+            sha={base ?? null}
+            deckSlug={deckSlug}
+            targetSlideId={targetSlideId}
+          />
+          <PreviewPane
+            label="After"
+            sha={proposed ?? null}
+            deckSlug={deckSlug}
+            targetSlideId={targetSlideId}
+          />
         </div>
       ) : (
         <div className="h-[calc(100vh-9rem)] min-h-[28rem] overflow-auto bg-background">
@@ -722,11 +938,66 @@ function PreviewPane({
   label,
   sha,
   deckSlug,
+  targetSlideId,
 }: {
   label: string;
   sha: string | null;
   deckSlug: string;
+  targetSlideId: string | null;
 }) {
+  const iframeRef = useRef<HTMLIFrameElement | null>(null);
+  // Track readiness so we don't postMessage before viewer-chrome has wired
+  // its listener. `bip:ready` fires once the active slide is mounted; we
+  // also fall back to onLoad in case the iframe was already loaded when
+  // targetSlideId changed (cached navigation).
+  const [ready, setReady] = useState(false);
+
+  // Reset ready state when the bundle (sha) changes; viewer-chrome re-emits
+  // bip:ready on the next load.
+  useEffect(() => {
+    setReady(false);
+  }, [sha]);
+
+  // Origin-locked listener that flips to ready when *this* iframe's chrome
+  // posts bip:ready. Comparing ev.source against contentWindow ensures
+  // we don't react to the main CurrentPreview iframe (when it's mounted
+  // alongside on the same page transition).
+  useEffect(() => {
+    function onMsg(ev: MessageEvent) {
+      if (ev.origin !== window.location.origin) return;
+      if (ev.source !== iframeRef.current?.contentWindow) return;
+      const data = ev.data as { type?: string };
+      if (data?.type === 'bip:ready') setReady(true);
+    }
+    window.addEventListener('message', onMsg);
+    return () => window.removeEventListener('message', onMsg);
+  }, []);
+
+  // Push the active slide id into the iframe whenever it changes (or once
+  // the iframe signals ready).
+  useEffect(() => {
+    if (!ready || !targetSlideId) return;
+    const win = iframeRef.current?.contentWindow;
+    if (!win) return;
+    try {
+      win.postMessage({ type: 'bip:goto', slideId: targetSlideId }, window.location.origin);
+    } catch {
+      /* ignore */
+    }
+  }, [ready, targetSlideId]);
+
+  const handleLoad = () => {
+    // Tell viewer-chrome a parent is hosting controls (mirrors
+    // CurrentPreview). It will respond with bip:ready.
+    const win = iframeRef.current?.contentWindow;
+    if (!win) return;
+    try {
+      win.postMessage({ type: 'bip:embed' }, window.location.origin);
+    } catch {
+      /* ignore */
+    }
+  };
+
   return (
     <div className="flex flex-col bg-card">
       <div className="flex items-center justify-between border-b px-2 py-1.5">
@@ -737,9 +1008,11 @@ function PreviewPane({
       </div>
       {sha ? (
         <iframe
+          ref={iframeRef}
           key={sha}
           src={`/d/${deckSlug}?at_commit=${sha}`}
           title={`${label} preview`}
+          onLoad={handleLoad}
           className="h-[calc(100vh-10rem)] min-h-[28rem] w-full bg-background"
         />
       ) : (
@@ -763,6 +1036,10 @@ function MessageList({
   rejecting,
   onAccept,
   onReject,
+  pendingText,
+  pendingStartedAt,
+  onRetry,
+  onUseSuggestion,
 }: {
   messages: AIMessage[];
   jobs: Record<string, Job>;
@@ -771,31 +1048,55 @@ function MessageList({
   rejecting: string | null;
   onAccept: (jobId: string) => void;
   onReject: (jobId: string) => void;
+  pendingText: string | null;
+  pendingStartedAt: number | null;
+  onRetry: () => void;
+  onUseSuggestion: (text: string) => void;
 }) {
   const scrollerRef = useRef<HTMLDivElement | null>(null);
   useEffect(() => {
     const el = scrollerRef.current;
     if (el) el.scrollTop = el.scrollHeight;
-  }, [messages.length, pendingJobId]);
+  }, [messages.length, pendingJobId, pendingText]);
 
-  if (messages.length === 0) {
+  // Index of the most recent assistant_error — we attach a Retry button to
+  // only that bubble so older failures stay tidy.
+  const lastErrorIdx = useMemo(() => {
+    for (let i = messages.length - 1; i >= 0; i--) {
+      const c = asContent(messages[i]!.content);
+      if (c.kind === 'assistant_error') return i;
+    }
+    return -1;
+  }, [messages]);
+
+  if (messages.length === 0 && !pendingText) {
     return (
-      <div className="flex flex-1 flex-col items-center justify-center gap-3 px-6 py-8 text-center">
+      <div className="flex flex-1 flex-col items-center justify-center gap-4 px-6 py-8 text-center">
         <div className="flex h-10 w-10 items-center justify-center rounded-full bg-primary/10 text-primary">
           <Sparkles className="h-5 w-5" />
         </div>
         <p className="text-sm text-muted-foreground">
           Start a conversation to edit this deck with AI.
-          <br />
-          <span className="text-xs">Try “Tighten the headline on slide 1.”</span>
         </p>
+        <div className="flex flex-wrap items-center justify-center gap-1.5">
+          {EMPTY_STATE_SUGGESTIONS.map((s) => (
+            <button
+              key={s}
+              type="button"
+              onClick={() => onUseSuggestion(s)}
+              className="rounded-full border bg-card px-2.5 py-1 text-xs text-muted-foreground transition-colors hover:bg-accent hover:text-foreground"
+            >
+              {s}
+            </button>
+          ))}
+        </div>
       </div>
     );
   }
 
   return (
     <div ref={scrollerRef} className="flex-1 space-y-3 overflow-y-auto px-3 py-3">
-      {messages.map((m) => {
+      {messages.map((m, i) => {
         const c = asContent(m.content);
         const job = m.relatedJobId ? (jobs[m.relatedJobId] ?? null) : null;
         return (
@@ -809,9 +1110,66 @@ function MessageList({
             rejecting={rejecting === job?.id}
             onAccept={() => job && onAccept(job.id)}
             onReject={() => job && onReject(job.id)}
+            showRetry={i === lastErrorIdx && !pendingText}
+            onRetry={onRetry}
           />
         );
       })}
+      {pendingText && (
+        <>
+          <div className="flex justify-end">
+            <div className="max-w-[85%] rounded-2xl rounded-br-sm bg-primary px-3 py-2 text-sm text-primary-foreground whitespace-pre-wrap opacity-90">
+              {pendingText}
+            </div>
+          </div>
+          <ThinkingBubble startedAt={pendingStartedAt} />
+        </>
+      )}
+    </div>
+  );
+}
+
+const EMPTY_STATE_SUGGESTIONS = [
+  'Tighten the headline on slide 1',
+  'Add a quote slide after the cover',
+  'Make the body copy more concise',
+  'Use the brand accent color for the CTA',
+] as const;
+
+function ThinkingBubble({ startedAt }: { startedAt: number | null }) {
+  const [elapsed, setElapsed] = useState(0);
+  useEffect(() => {
+    if (startedAt == null) return;
+    setElapsed(Math.floor((Date.now() - startedAt) / 1000));
+    const id = window.setInterval(() => {
+      setElapsed(Math.floor((Date.now() - startedAt) / 1000));
+    }, 1000);
+    return () => window.clearInterval(id);
+  }, [startedAt]);
+  // Soft, escalating copy so a 30s turn doesn't feel stuck.
+  const status =
+    elapsed < 4
+      ? 'Claude is thinking…'
+      : elapsed < 12
+        ? 'Claude is editing your deck…'
+        : elapsed < 30
+          ? 'Still working—writing the change…'
+          : 'Big edit, hang tight…';
+  return (
+    <div className="flex items-center gap-2">
+      <div
+        className="flex items-center gap-2 rounded-2xl rounded-bl-sm bg-muted px-3 py-2 text-sm text-muted-foreground"
+        role="status"
+        aria-live="polite"
+      >
+        <span className="flex items-center gap-1">
+          <span className="h-1.5 w-1.5 animate-bounce rounded-full bg-current [animation-delay:-0.3s]" />
+          <span className="h-1.5 w-1.5 animate-bounce rounded-full bg-current [animation-delay:-0.15s]" />
+          <span className="h-1.5 w-1.5 animate-bounce rounded-full bg-current" />
+        </span>
+        <span>{status}</span>
+        <span className="font-mono text-[11px] tabular-nums opacity-70">{elapsed}s</span>
+      </div>
     </div>
   );
 }
@@ -825,6 +1183,8 @@ function MessageRow({
   rejecting,
   onAccept,
   onReject,
+  showRetry,
+  onRetry,
 }: {
   message: AIMessage;
   content: MessageContent;
@@ -834,11 +1194,24 @@ function MessageRow({
   rejecting: boolean;
   onAccept: () => void;
   onReject: () => void;
+  showRetry: boolean;
+  onRetry: () => void;
 }) {
+  // Locale-formatted timestamp would mismatch between server (UTC) and
+  // client (browser tz) → React hydration warning. Compute it only after
+  // mount so the SSR markup has no title attribute and the client fills
+  // it in on first effect.
+  const [ts, setTs] = useState<string | undefined>(undefined);
+  useEffect(() => {
+    if (message.createdAt) setTs(new Date(message.createdAt).toLocaleString());
+  }, [message.createdAt]);
   if (message.role === 'USER' && content.kind === 'user') {
     return (
       <div className="flex justify-end">
-        <div className="max-w-[85%] rounded-2xl rounded-br-sm bg-primary px-3 py-2 text-sm text-primary-foreground whitespace-pre-wrap">
+        <div
+          title={ts}
+          className="max-w-[85%] rounded-2xl rounded-br-sm bg-primary px-3 py-2 text-sm text-primary-foreground whitespace-pre-wrap"
+        >
           {content.text}
         </div>
       </div>
@@ -847,7 +1220,10 @@ function MessageRow({
   if (message.role === 'ASSISTANT' && content.kind === 'assistant') {
     return (
       <div className="space-y-2">
-        <div className="max-w-[90%] rounded-2xl rounded-bl-sm bg-muted px-3 py-2 text-sm text-foreground whitespace-pre-wrap">
+        <div
+          title={ts}
+          className="max-w-[90%] rounded-2xl rounded-bl-sm bg-muted px-3 py-2 text-sm text-foreground whitespace-pre-wrap"
+        >
           {content.parsed.explanation}
         </div>
         {job && (
@@ -864,9 +1240,27 @@ function MessageRow({
     );
   }
   if (message.role === 'ASSISTANT' && content.kind === 'assistant_error') {
+    const errKind = getErrorKind(content);
+    const isTruncated = errKind === 'truncated';
     return (
-      <div className="max-w-[90%] rounded-2xl rounded-bl-sm border border-destructive/30 bg-destructive/10 px-3 py-2 text-sm text-destructive">
-        {content.userMessage}
+      <div className="space-y-2">
+        <div
+          title={ts}
+          className="max-w-[90%] rounded-2xl rounded-bl-sm border border-destructive/30 bg-destructive/10 px-3 py-2 text-sm text-destructive"
+        >
+          {content.userMessage}
+        </div>
+        {showRetry && (
+          <Button
+            type="button"
+            size="sm"
+            variant="outline"
+            onClick={onRetry}
+            leadingIcon={<RefreshCw className="h-3.5 w-3.5" />}
+          >
+            {isTruncated ? 'Retry with max budget' : 'Retry'}
+          </Button>
+        )}
       </div>
     );
   }
@@ -945,9 +1339,13 @@ function Composer({
   confirmSupersede,
   onCancelSupersede,
   onSend,
+  onCancel,
   error,
   brandKitId,
   brandKitVersionId,
+  scope,
+  onScopeChange,
+  currentSlideId,
 }: {
   input: string;
   onInput: (v: string) => void;
@@ -956,9 +1354,13 @@ function Composer({
   confirmSupersede: boolean;
   onCancelSupersede: () => void;
   onSend: (supersede: boolean) => void;
+  onCancel: () => void;
   error: string | null;
   brandKitId: string | null;
   brandKitVersionId: string | null;
+  scope: 'slide' | 'deck';
+  onScopeChange: (scope: 'slide' | 'deck') => void;
+  currentSlideId: string | null;
 }) {
   return (
     <div className="border-t bg-card px-3 py-3">
@@ -981,6 +1383,37 @@ function Composer({
             disabled={disabled || sending}
             onPick={(prompt) => onInput(prompt + input)}
           />
+        )}
+      </div>
+
+      {/* Scope toggle — lets the user keep edits constrained to the
+          currently-focused slide instead of letting Claude touch siblings. */}
+      <div className="mb-2 flex flex-wrap items-center gap-2">
+        <span className="text-eyebrow">Scope</span>
+        <Tabs
+          value={scope === 'slide' && !currentSlideId ? 'deck' : scope}
+          onValueChange={(v) => onScopeChange(v as 'slide' | 'deck')}
+        >
+          <TabsList className="h-7">
+            <TabsTrigger
+              value="slide"
+              className="text-xs"
+              disabled={!currentSlideId}
+              title={
+                currentSlideId
+                  ? `Restrict to ${currentSlideId}`
+                  : 'Open the preview to focus a slide'
+              }
+            >
+              This slide
+            </TabsTrigger>
+            <TabsTrigger value="deck" className="text-xs">
+              Whole deck
+            </TabsTrigger>
+          </TabsList>
+        </Tabs>
+        {scope === 'slide' && currentSlideId && (
+          <span className="font-mono text-[11px] text-muted-foreground">{currentSlideId}</span>
         )}
       </div>
 
@@ -1027,25 +1460,36 @@ function Composer({
             // Cmd/Ctrl+Enter sends; plain Enter inserts a newline.
             if (e.key === 'Enter' && (e.metaKey || e.ctrlKey)) {
               e.preventDefault();
-              onSend(false);
+              if (!sending) onSend(false);
             }
           }}
           rows={3}
-          disabled={disabled || sending}
+          disabled={disabled}
           placeholder={disabled ? 'Editor locked by another user' : 'Ask Claude to change a slide…'}
           className="resize-none"
         />
         <div className="mt-2 flex items-center justify-between gap-2">
           <span className="text-[11px] text-muted-foreground">⌘/Ctrl + Enter to send</span>
-          <Button
-            type="submit"
-            size="sm"
-            disabled={disabled || sending || !input.trim()}
-            loading={sending}
-            leadingIcon={sending ? undefined : <SendIcon className="h-3.5 w-3.5" />}
-          >
-            Send
-          </Button>
+          {sending ? (
+            <Button
+              type="button"
+              size="sm"
+              variant="outline"
+              onClick={onCancel}
+              leadingIcon={<X className="h-3.5 w-3.5" />}
+            >
+              Stop
+            </Button>
+          ) : (
+            <Button
+              type="submit"
+              size="sm"
+              disabled={disabled || !input.trim()}
+              leadingIcon={<SendIcon className="h-3.5 w-3.5" />}
+            >
+              Send
+            </Button>
+          )}
         </div>
       </form>
     </div>

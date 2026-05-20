@@ -33,9 +33,18 @@ export interface ClaudeResponse {
 export interface CallClaudeOptions {
   /** Override the default model. Phase 1 uses ANTHROPIC_DEFAULT_MODEL. */
   model?: string;
-  /** Max tokens to generate. Default 2048 — enough for an explanation + small file content. */
+  /**
+   * Max tokens to generate. Default 16000 — Sonnet 4.5 supports up to 64K
+   * output, and AI-editor turns frequently rewrite full slide HTML files,
+   * so a small budget causes mid-JSON truncation. Callers may go higher
+   * (up to the model max) for big edits.
+   */
   maxTokens?: number;
-  /** Hard timeout in ms. Per ai-editor.md §10 the chat-depth turn is 60s. */
+  /**
+   * Hard timeout in ms. Default 180s — large output budgets can take
+   * 1–3 minutes to stream from Anthropic. Callers using >32K tokens should
+   * raise this further.
+   */
   timeoutMs?: number;
   /** Optional id propagated through logs. */
   requestId?: string;
@@ -106,15 +115,21 @@ export async function callClaude(
   }
   const client = getClient();
   const model = options.model ?? defaultModel();
-  const maxTokens = options.maxTokens ?? 2048;
-  const timeoutMs = options.timeoutMs ?? 60_000;
+  const maxTokens = options.maxTokens ?? 16_000;
+  const timeoutMs = options.timeoutMs ?? 180_000;
 
   const controller = new AbortController();
   const timer = setTimeout(() => controller.abort(), timeoutMs);
 
   const startedAt = Date.now();
   try {
-    const result = await client.messages.create(
+    // Use the SDK's streaming helper rather than `messages.create`. The
+    // non-streaming endpoint refuses any request whose estimated runtime
+    // exceeds 10 minutes — which trips immediately at our 32K/64K output
+    // budgets even when the actual response is fast. Streaming has no such
+    // limit. We still wait for the final assembled Message so callers see
+    // the same shape; the network just stays open the whole time.
+    const stream = client.messages.stream(
       {
         model,
         max_tokens: maxTokens,
@@ -123,6 +138,7 @@ export async function callClaude(
       },
       { signal: controller.signal },
     );
+    const result = await stream.finalMessage();
 
     const text = result.content
       .filter((b): b is Anthropic.TextBlock => b.type === 'text')
@@ -785,12 +801,7 @@ function briefAsUserMessage(brief: OutlineBrief): string {
  */
 export function buildOutlineSystemPrompt(brandContext?: string | null): string {
   if (!brandContext) return OUTLINE_SYSTEM_PROMPT;
-  return [
-    OUTLINE_SYSTEM_PROMPT,
-    '',
-    '## Brand context',
-    brandContext,
-  ].join('\n');
+  return [OUTLINE_SYSTEM_PROMPT, '', '## Brand context', brandContext].join('\n');
 }
 
 /** Convert a brief into the initial user message that opens the chat. */
@@ -798,7 +809,9 @@ export function buildOutlineKickoff(brief: OutlineBrief): ClaudeMessage {
   return { role: 'user', content: briefAsUserMessage(brief) };
 }
 
-function parseOutlineTurn(raw: string): { ok: true; value: OutlineTurnPayload } | { ok: false; error: string } {
+function parseOutlineTurn(
+  raw: string,
+): { ok: true; value: OutlineTurnPayload } | { ok: false; error: string } {
   // Tolerate accidental markdown fences from Claude.
   const stripped = raw
     .trim()
@@ -906,10 +919,31 @@ function mockOutlineResponse(
     outline: {
       slides: [
         { id: 's1', title: `${title} — Cover`, notes: 'Opening cover slide.', layoutHint: 'cover' },
-        { id: 's2', title: 'Context', notes: 'Why this matters now.', layoutHint: 'title-and-body' },
-        { id: 's3', title: 'Approach', notes: 'How we propose to tackle it.', layoutHint: 'two-column' },
-        { id: 's4', title: 'Impact', notes: 'Expected outcome and metrics.', layoutHint: 'stat', dataPoints: ['+X%', '-Y days'] },
-        { id: 's5', title: 'Next steps', notes: 'Specific call to action.', layoutHint: 'title-and-body' },
+        {
+          id: 's2',
+          title: 'Context',
+          notes: 'Why this matters now.',
+          layoutHint: 'title-and-body',
+        },
+        {
+          id: 's3',
+          title: 'Approach',
+          notes: 'How we propose to tackle it.',
+          layoutHint: 'two-column',
+        },
+        {
+          id: 's4',
+          title: 'Impact',
+          notes: 'Expected outcome and metrics.',
+          layoutHint: 'stat',
+          dataPoints: ['+X%', '-Y days'],
+        },
+        {
+          id: 's5',
+          title: 'Next steps',
+          notes: 'Specific call to action.',
+          layoutHint: 'title-and-body',
+        },
       ],
     },
   };

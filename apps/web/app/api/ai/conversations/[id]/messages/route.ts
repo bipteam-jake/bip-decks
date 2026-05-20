@@ -17,10 +17,10 @@ import { postUserMessage } from '@/lib/ai/service';
 
 export const runtime = 'nodejs';
 export const dynamic = 'force-dynamic';
-// One Claude turn can take up to 60s (ai-editor.md §10). Default Next.js
-// serverless timeout is 10s on Vercel, but we control the runtime; this
-// constant signals intent for our own Docker deployment.
-export const maxDuration = 90;
+// Large output budgets (up to ~64K tokens) can take several minutes to
+// stream from Anthropic. We control the runtime in Docker, so this is a
+// hint not a hard limit.
+export const maxDuration = 360;
 
 const bodySchema = z.object({
   text: z.string().min(1).max(8000),
@@ -31,6 +31,10 @@ const bodySchema = z.object({
    * giving the UI a chance to confirm with the user.
    */
   supersedePending: z.boolean().optional(),
+  /** Opt into the full ~64K-token output budget for very large edits. */
+  expandedBudget: z.boolean().optional(),
+  /** Restrict Claude to currentSlideId only when set to 'slide'. */
+  scope: z.enum(['slide', 'deck']).optional(),
 });
 
 export async function POST(
@@ -51,6 +55,8 @@ export async function POST(
       text: parsed.data.text,
       currentSlideId: parsed.data.currentSlideId,
       supersedePending: parsed.data.supersedePending,
+      expandedBudget: parsed.data.expandedBudget,
+      scope: parsed.data.scope,
       requestId,
     });
 

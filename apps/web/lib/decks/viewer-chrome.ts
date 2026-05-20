@@ -50,37 +50,54 @@ ${VIEWER_JS}
 // the AI editor in the future.
 
 const VIEWER_CSS = `
+html.bip-viewer-single,
 body.bip-viewer-single {
   margin: 0;
-  overflow-x: hidden;
+  height: 100%;
+  overflow: hidden;
   background: var(--bip-stage-bg, #e5e7eb);
 }
 /* The deck becomes a centered stage; each active slide is a 16:9 "page"
    that scales to fit both viewport dimensions, with a gutter and shadow
-   so it visually reads as a presentation slide. */
+   so it visually reads as a presentation slide.
+   Use !important to override authored deck CSS that commonly sets
+   .deck { min-height: 100vh } or a flex/grid layout for the multi-slide
+   scroll runtime. */
 body.bip-viewer-single main.deck,
 body.bip-viewer-single .deck {
-  min-height: 100vh;
-  display: grid;
-  place-items: center;
-  padding: 1.5rem;
-  box-sizing: border-box;
-  gap: 0;
+  height: 100vh !important;
+  min-height: 0 !important;
+  max-height: 100vh !important;
+  width: 100vw !important;
+  max-width: 100vw !important;
+  display: grid !important;
+  place-items: center !important;
+  padding: 1.5rem !important;
+  margin: 0 !important;
+  box-sizing: border-box !important;
+  gap: 0 !important;
+  overflow: hidden !important;
 }
 body.bip-viewer-single .deck > .slide { display: none; }
+/* Authored slide CSS commonly uses width: 100vw / height: 100vh to fill
+   the viewport. In the embedded admin preview vw/vh resolve to the iframe
+   viewport, not the inner stage, so without !important overrides the slide
+   bleeds past the stage. */
 body.bip-viewer-single .deck > .slide.bip-active {
-  display: block;
-  position: relative;
-  width: min(100%, calc((100vh - 3rem) * 16 / 9));
-  aspect-ratio: 16 / 9;
+  display: block !important;
+  position: relative !important;
+  width: min(100%, calc((100vh - 3rem) * 16 / 9)) !important;
+  height: auto !important;
+  max-height: calc(100vh - 3rem) !important;
+  aspect-ratio: 16 / 9 !important;
   background: #fff;
   border-radius: 8px;
   box-shadow:
     0 10px 40px -10px rgba(0,0,0,0.22),
     0 2px 6px -1px rgba(0,0,0,0.1);
-  overflow: hidden;
-  margin: 0;
-  min-height: 0;
+  overflow: hidden !important;
+  margin: 0 !important;
+  box-sizing: border-box !important;
 }
 /* When parent chrome is hosting the controls, hide the overlay's floating
    toggle + pin buttons so we don't double up. The comments overlay listens
