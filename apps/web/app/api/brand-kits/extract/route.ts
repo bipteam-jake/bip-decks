@@ -38,6 +38,10 @@ export async function POST(req: NextRequest): Promise<Response> {
     }
     const bytes = new Uint8Array(await file.arrayBuffer());
     const requestId = req.headers.get('x-request-id') ?? undefined;
+    // TODO Chunk 3: route this through `callModel('BRAND_KIT_EXTRACT', ...)`
+    // once the gateway has a multimodal/PDF surface. Today the generator
+    // calls the Anthropic SDK directly because callModel is text-only.
+    // See docs/bip-deck-platform-ai-editor.md §brand-kit extraction.
     const iterator = extractBrandKitFromPdf(
       { pdf: bytes, filename: file.name },
       { requestId },

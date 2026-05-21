@@ -1,11 +1,13 @@
 // AI conversation service. Routes are thin; this module owns the rules.
 //
-// Per docs/bip-deck-platform-ai-editor.md §3 the full turn:
+// As of Phase 3 chunk 1 the turn is asynchronous:
 //   1. Create AIConversation for a deck.
 //   2. Post a user message: persist user msg -> auto-reject any pending
-//      proposal (§7) -> acquire lock (§9) -> assemble context -> call Claude
-//      -> parse response -> if changes: build proposal (job + branch + cache)
-//      -> persist assistant msg (with model/tokens/cost + relatedJobId).
+//      proposal (§7) -> acquire lock (§9) -> ENQUEUE an AI_EDIT Job
+//      and return immediately. The Claude call + proposal build runs in
+//      the worker (see apps/web/lib/ai/run-job.ts) and the UI polls the
+//      conversation endpoint to pick up the assistant message + job
+//      state transitions.
 //   3. Retrieve conversation history.
 
 import type { AIConversation, AIMessage, Deck, Job, Prisma, User } from '@bip/db';
@@ -13,29 +15,12 @@ import type { AIConversation, AIMessage, Deck, Job, Prisma, User } from '@bip/db
 import { prisma } from '@/lib/prisma';
 import { getDeckById } from '@/lib/decks/service';
 import { ConflictError, NotFoundError } from '@/lib/errors';
-import {
-  buildBrandContextSystemPrompt,
-  buildPatternSystemPrompt,
-  callClaude,
-  type ClaudeMessage,
-} from '@bip/ai-gateway';
-import { listPatterns } from '@/lib/brand-kits/patterns-service';
-import { parseTokens, parseVoice } from '@/lib/brand-kits/tokens';
+import { enqueueJob } from '@/lib/queue';
+import type { AIEditResponse, ParseFailure } from './response-parser';
 
-import { AI_EDITOR_SYSTEM_PROMPT } from './system-prompt';
-import { buildDeckStateBlock } from './context';
 import { acquireOrRefreshLock } from './lock';
-import {
-  autoRejectPendingForConversation,
-  buildProposal,
-  listPendingForConversation,
-} from './proposal';
-import {
-  parseClaudeResponse,
-  failureToUserMessage,
-  type AIEditResponse,
-  type ParseFailure,
-} from './response-parser';
+import { autoRejectPendingForConversation, listPendingForConversation } from './proposal';
+import type { AIEditJobInput } from './proposal';
 
 // ---------------------------------------------------------------------------
 // AIMessage.content shape
@@ -171,125 +156,44 @@ export interface PostMessageInput {
 
 export interface PostMessageResult {
   userMessage: AIMessage;
-  assistantMessage: AIMessage;
-  job: Job | null;
+  /**
+   * The QUEUED AI_EDIT job that the worker will pick up. The assistant
+   * message lands later — the UI is expected to poll the conversation
+   * endpoint until it appears.
+   */
+  job: Job;
   /** Job ids that were auto-canceled because of `supersedePending`. */
   supersededJobIds: string[];
 }
 
 /**
- * Assemble the system prompt for an AI turn. The base editor prompt is
- * always included; if the deck is bound to a brand-kit version we layer on
- * (a) a compact brand-context block (kit name, palette, fonts, voice,
- * identity asset kinds) so Claude can author on-brand without needing
- * patterns, and (b) the approved pattern catalog so it can reach for slugs
- * when relevant. The brand block goes first because it's identity-level;
- * patterns are concrete templates that may reference brand tokens.
+ * Truncate the user's prompt to a label-sized snippet for the Job row.
+ * The queue panel renders this so the user can tell which message a
+ * running job belongs to.
  */
-async function assembleSystemPrompt(brandKitVersionId: string | null): Promise<string> {
-  if (!brandKitVersionId) return AI_EDITOR_SYSTEM_PROMPT;
-
-  // Load the version row + identity-asset kinds + parent kit name in
-  // parallel with the pattern list. All small queries; one Promise.all
-  // keeps the turn latency flat.
-  const [version, identityAssets, patterns] = await Promise.all([
-    prisma.brandKitVersion.findUnique({
-      where: { id: brandKitVersionId },
-      select: {
-        versionLabel: true,
-        tokens: true,
-        voice: true,
-        summary: true,
-        brandKit: { select: { name: true } },
-      },
-    }),
-    prisma.brandKitIdentityAsset.findMany({
-      where: { brandKitVersionId },
-      select: { kind: true },
-    }),
-    listPatterns({ brandKitVersionId, approvedOnly: true, limit: 200 }),
-  ]);
-
-  let prompt = AI_EDITOR_SYSTEM_PROMPT;
-
-  if (version) {
-    // Tokens/voice are user-authored JSON; parse defensively. If either
-    // fails validation we still want to surface what we can rather than
-    // dropping the whole brand block, so each is independently guarded.
-    let colors: Record<string, string> = {};
-    let fontFamilies: Record<string, string> = {};
-    try {
-      const tokens = parseTokens(version.tokens);
-      colors = tokens.colors;
-      fontFamilies = tokens.type.fontFamilies;
-    } catch {
-      /* invalid tokens — fall through with empty palette/fonts */
-    }
-    let voice = { tone: '', terminology: '', dos: '', donts: '' };
-    try {
-      voice = parseVoice(version.voice);
-    } catch {
-      /* invalid voice — leave defaults */
-    }
-    prompt = buildBrandContextSystemPrompt(prompt, {
-      kitName: version.brandKit.name,
-      versionLabel: version.versionLabel,
-      summary: version.summary,
-      colors,
-      fontFamilies,
-      voice,
-      identityAssetKinds: Array.from(new Set(identityAssets.map((a) => a.kind))),
-    });
-  }
-
-  return buildPatternSystemPrompt(
-    prompt,
-    patterns.map((p) => ({
-      slug: p.slug,
-      name: p.name,
-      description: p.description,
-      category: p.category,
-      parameters: p.parameters,
-    })),
-  );
+function jobLabelFromText(text: string, maxLen = 72): string {
+  const single = text.replace(/\s+/g, ' ').trim();
+  return single.length <= maxLen ? single : `${single.slice(0, maxLen - 1).trimEnd()}…`;
 }
 
 /**
- * Turn replay: convert persisted AIMessage rows back into a Claude messages
- * array. Skips error assistant messages (we don't want Claude to "see" its
- * own bad output) and any system rows (unused in Phase 1). Strips deck_state
- * from prior user messages — only the current turn gets fresh context.
- */
-function buildHistory(messages: AIMessage[]): ClaudeMessage[] {
-  const history: ClaudeMessage[] = [];
-  for (const m of messages) {
-    const c = asMessageContent(m.content);
-    if (m.role === 'USER' && c.kind === 'user') {
-      history.push({ role: 'user', content: c.text });
-    } else if (m.role === 'ASSISTANT' && c.kind === 'assistant') {
-      history.push({ role: 'assistant', content: c.raw });
-    }
-    // assistant_error and SYSTEM intentionally skipped.
-  }
-  return history;
-}
-
-/**
- * Run one chat-depth turn. Always persists a user AIMessage row and an
- * assistant AIMessage row, even if Claude failed — the assistant row carries
- * a user-friendly message inside its `assistant_error` content per §10, and
- * the route returns success either way. The UI distinguishes success from
- * error by inspecting `content.kind`. This keeps the chat reactive (no
- * silent dropped turns) and matches the §10 table where every failure
- * surfaces in chat rather than via HTTP error.
+ * Run one chat-depth turn — *asynchronously*. Persists the user message,
+ * auto-supersedes any pending proposal, and enqueues an AI_EDIT job. The
+ * worker (see lib/ai/run-job.ts) does the Claude call, persists the
+ * assistant message, and either flips the job to AWAITING_REVIEW with a
+ * proposal branch or to DONE for an advice-only reply. The UI picks up
+ * those transitions by polling the conversation GET endpoint.
+ *
+ * This function intentionally returns BEFORE Claude is called. The chat
+ * stays continuous via the pending "thinking…" bubble that the editor
+ * shows until the next poll surfaces the assistant row.
  */
 export async function postUserMessage(input: PostMessageInput): Promise<PostMessageResult> {
-  const { conversation, deck, messages } = await getConversation(input.conversationId);
+  const { conversation, deck } = await getConversation(input.conversationId);
 
   if (!deck.headCommitSha) {
     // A deck without a head commit is a broken-init situation; treat it as
-    // not-found rather than letting context assembly throw a confusing
-    // git-show error.
+    // not-found rather than letting the job pick up a malformed row.
     throw new NotFoundError('Deck has no committed content', 'deck_no_head');
   }
 
@@ -304,26 +208,20 @@ export async function postUserMessage(input: PostMessageInput): Promise<PostMess
   //     412 so the UI can confirm and retry. Otherwise auto-reject the
   //     pending job(s) before kicking off this turn.
   const pending = await listPendingForConversation(conversation.id);
-  let supersededJobIds: string[] = [];
-  if (pending.length > 0) {
-    if (!input.supersedePending) {
-      throw new ConflictError('A previous proposal is still pending review', 'pending_proposal', {
-        pendingJobIds: pending.map((p) => p.id),
-      });
-    }
-    // Carry these out after we persist the user message — we need that
-    // message's id as the supersede marker (§7).
+  if (pending.length > 0 && !input.supersedePending) {
+    throw new ConflictError('A previous proposal is still pending review', 'pending_proposal', {
+      pendingJobIds: pending.map((p) => p.id),
+    });
   }
 
-  // 1. Build deck state from the CURRENT head before we mutate anything.
-  const { currentSlideId, text: deckState } = await buildDeckStateBlock({
-    repoPath: deck.repoPath,
-    commitSha: deck.headCommitSha,
-    currentSlideId: input.currentSlideId,
-  });
+  // 1. Determine current slide id for the deck-state snapshot the worker
+  //    will rebuild. We don't compute the full deck-state here — that
+  //    runs in the worker against the LATEST head at run time (the user
+  //    may accept other proposals between enqueue and dispatch).
+  const currentSlideId = input.currentSlideId ?? null;
 
-  // 2. Persist the user message FIRST, before any external call. If the
-  //    Claude call fails the user's message stays in the record.
+  // 2. Persist the user message FIRST, before any external/queue call.
+  //    If enqueue fails the user message stays in the record.
   const userMessage = await prisma.aIMessage.create({
     data: {
       conversationId: conversation.id,
@@ -331,13 +229,14 @@ export async function postUserMessage(input: PostMessageInput): Promise<PostMess
       content: {
         kind: 'user',
         text: input.text,
-        slideId: currentSlideId,
+        slideId: currentSlideId ?? undefined,
       } satisfies UserMessageContent,
     },
   });
 
-  // 2a. Now that we have the message id, auto-reject any pending proposals
-  //     citing it as the supersede marker.
+  // 2a. Auto-reject any pending proposals citing the new message id as
+  //     the supersede marker.
+  let supersededJobIds: string[] = [];
   if (pending.length > 0) {
     supersededJobIds = await autoRejectPendingForConversation({
       conversationId: conversation.id,
@@ -345,155 +244,24 @@ export async function postUserMessage(input: PostMessageInput): Promise<PostMess
     });
   }
 
-  // 3. Assemble the Claude messages array. Historical messages first, then
-  //    the new user message with the deck_state block prepended.
-  const history = buildHistory(messages);
-  const scopeRule =
-    input.scope === 'slide'
-      ? `\n\nSCOPE: Only modify slides/${currentSlideId}.html for this turn. Do NOT propose changes to any other slide file, styles/global.css, scripts/global.js, or deck.json. If the request implies edits outside that file, ask a clarifying question instead of editing.`
-      : '';
-  const currentTurn: ClaudeMessage = {
-    role: 'user',
-    content: `${deckState}\n\n${input.text}${scopeRule}`,
+  // 3. Enqueue the AI_EDIT job. The worker reads job.input to rebuild
+  //    everything it needs.
+  const jobInput: AIEditJobInput = {
+    conversationId: conversation.id,
+    triggeringMessageId: userMessage.id,
+    text: input.text,
+    currentSlideId: currentSlideId ?? undefined,
+    scope: input.scope ?? 'deck',
+    expandedBudget: Boolean(input.expandedBudget),
+    requestId: input.requestId,
   };
-  const claudeMessages = [...history, currentTurn];
-
-  // 4. Call the gateway. On any failure, persist an assistant_error row
-  //    with a friendly user message so the UI can render it inline.
-  let assistantContent: AssistantMessageContent;
-  let model: string | null = null;
-  let tokensIn: number | null = null;
-  let tokensOut: number | null = null;
-  let costCents: number | null = null;
-  let parsedResponse: AIEditResponse | null = null;
-
-  try {
-    const systemPrompt = await assembleSystemPrompt(deck.brandKitVersionId);
-    // Slide HTML "full new file content" is regularly several thousand
-    // tokens per slide, and a single turn can rewrite multiple slides.
-    // Default to a high 32K budget; the UI can request the full ~64K cap
-    // via `expandedBudget` after a truncation. Timeout scales with budget.
-    const maxTokens = input.expandedBudget ? 64_000 : 32_000;
-    const timeoutMs = input.expandedBudget ? 300_000 : 180_000;
-    const response = await callClaude(claudeMessages, systemPrompt, {
-      requestId: input.requestId,
-      maxTokens,
-      timeoutMs,
-    });
-    model = response.model;
-    tokensIn = response.tokensIn;
-    tokensOut = response.tokensOut;
-    costCents = response.costCents;
-
-    const parseResult = parseClaudeResponse(response.content, {
-      stopReason: response.stopReason,
-    });
-    if (parseResult.ok) {
-      parsedResponse = parseResult.value;
-      assistantContent = {
-        kind: 'assistant',
-        raw: response.content,
-        parsed: parseResult.value,
-      };
-    } else {
-      // Log enough to debug recurring parse failures without leaking the
-      // full model output to the user.
-      // eslint-disable-next-line no-console
-      console.error(
-        JSON.stringify({
-          scope: 'ai-editor',
-          event: 'parse_failure',
-          conversationId: conversation.id,
-          requestId: input.requestId ?? null,
-          failureKind: parseResult.failure.kind,
-          stopReason: response.stopReason,
-          rawLength: response.content.length,
-          rawPreview: response.content.slice(0, 400),
-        }),
-      );
-      assistantContent = {
-        kind: 'assistant_error',
-        raw: response.content,
-        userMessage: failureToUserMessage(parseResult.failure),
-        error: parseResult.failure,
-      };
-    }
-  } catch (err) {
-    const message = (err as Error).message;
-    const isTimeout = message.includes('aborted') || message.toLowerCase().includes('timeout');
-    assistantContent = {
-      kind: 'assistant_error',
-      raw: '',
-      userMessage: isTimeout
-        ? 'Took too long. Try again or simplify the request.'
-        : 'Something went wrong reaching the model. Try again in a moment.',
-      error: { kind: 'gateway', message },
-    };
-    // eslint-disable-next-line no-console
-    console.error(
-      JSON.stringify({
-        scope: 'ai-editor',
-        event: 'gateway_error',
-        conversationId: conversation.id,
-        requestId: input.requestId ?? null,
-        message,
-      }),
-    );
-  }
-
-  // 5. Persist the assistant message. We need its id to link the Job
-  //    (Job.input.triggeringMessageId), so insert before building the
-  //    proposal, then update the row with relatedJobId once we have it.
-  let assistantMessage = await prisma.aIMessage.create({
-    data: {
-      conversationId: conversation.id,
-      role: 'ASSISTANT',
-      content: assistantContent as unknown as Prisma.InputJsonValue,
-      model,
-      tokensIn,
-      tokensOut,
-      costCents,
-    },
+  const job = await enqueueJob({
+    kind: 'AI_EDIT',
+    deckId: deck.id,
+    createdBy: input.user,
+    label: jobLabelFromText(input.text),
+    input: jobInput as unknown as Record<string, unknown>,
   });
-
-  // 6. If the parsed response contains changes, materialize them as a Job +
-  //    git working branch. On build failure we mutate the persisted
-  //    assistant row into an assistant_error so the UI shows the failure
-  //    inline (per §10 git-error row).
-  let job: Job | null = null;
-  if (parsedResponse && parsedResponse.changes && parsedResponse.changes.length > 0) {
-    try {
-      const result = await buildProposal({
-        deck,
-        user: input.user,
-        response: parsedResponse,
-        conversationId: conversation.id,
-        triggeringMessageId: assistantMessage.id,
-        requestId: input.requestId,
-      });
-      job = result.job;
-      assistantMessage = await prisma.aIMessage.update({
-        where: { id: assistantMessage.id },
-        data: { relatedJobId: job.id },
-      });
-    } catch (err) {
-      const message = (err as Error).message;
-      const failureContent: AssistantMessageContent = {
-        kind: 'assistant_error',
-        raw:
-          typeof assistantContent === 'object' && 'raw' in assistantContent
-            ? assistantContent.raw
-            : '',
-        userMessage:
-          'I drafted a change but couldn’t prepare the preview. Try rephrasing or try again.',
-        error: { kind: 'gateway', message },
-      };
-      assistantMessage = await prisma.aIMessage.update({
-        where: { id: assistantMessage.id },
-        data: { content: failureContent as unknown as Prisma.InputJsonValue },
-      });
-    }
-  }
 
   // Touch the conversation so listings sort right.
   await prisma.aIConversation.update({
@@ -501,5 +269,5 @@ export async function postUserMessage(input: PostMessageInput): Promise<PostMess
     data: { updatedAt: new Date() },
   });
 
-  return { userMessage, assistantMessage, job, supersededJobIds };
+  return { userMessage, job, supersededJobIds };
 }

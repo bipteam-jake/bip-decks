@@ -39,12 +39,36 @@ import type { AIEditResponse } from './response-parser';
 
 export interface AIEditJobInput {
   conversationId: string;
-  /** Mirror of the AIMessage row that triggered the job (for traceability). */
+  /**
+   * The user message that triggered this turn. Set at enqueue time so the
+   * worker can rebuild history without re-reading the chat. We also use it
+   * to thread the supersede marker on auto-rejected pending proposals.
+   */
   triggeringMessageId: string;
-  /** Snapshot of the proposed changes so the job is self-describing. */
-  changes: ProposalChange[];
+  /**
+   * The assistant message persisted by the worker once Claude returns.
+   * Set later (by run-job), not at enqueue.
+   */
+  assistantMessageId?: string;
+  /**
+   * Snapshot of the proposed changes so the job is self-describing.
+   * Populated by the worker after parsing Claude's response.
+   */
+  changes?: ProposalChange[];
   /** Claude's explanation, for the commit message and the UI. */
-  explanation: string;
+  explanation?: string;
+  /** User-typed request, preserved so retries/debug have the prompt. */
+  text: string;
+  /** Slide focused in the preview iframe when the turn was kicked off. */
+  currentSlideId?: string;
+  /** Scope toggle from the composer (defaults to deck). */
+  scope?: 'slide' | 'deck';
+  /** Opt into the high (~64K) output budget. */
+  expandedBudget?: boolean;
+  /** Forwarded to ai-gateway for log correlation. */
+  requestId?: string;
+  /** BullMQ job id, stamped by enqueueJob so cancel can remove cleanly. */
+  bullJobId?: string;
 }
 
 export interface AIEditJobOutput {
@@ -80,6 +104,12 @@ function shortSummary(explanation: string, maxLen = 72): string {
 // ---------------------------------------------------------------------------
 
 export interface BuildProposalInput {
+  /**
+   * The pre-existing Job row created by `enqueueJob` and already
+   * flipped to RUNNING by the worker. We update this row in place; we
+   * never create a new Job here.
+   */
+  job: Job;
   deck: Deck;
   user: User;
   response: AIEditResponse;
@@ -94,13 +124,20 @@ export interface BuildProposalResult {
 }
 
 /**
- * Create a Job (RUNNING), open `ai-{job_id}` off the deck head, commit the
- * changes with `[ai] {summary}`, prime the bundle cache for the new SHA,
- * flip the job to AWAITING_REVIEW. Callers persist the related AIMessage
- * with `relatedJobId = job.id` afterward.
+ * Given a Job that's already RUNNING, open `ai-{job_id}` off the deck
+ * head, commit the changes with `[ai] {summary}`, prime the bundle cache
+ * for the new SHA, then flip the job to AWAITING_REVIEW. Callers persist
+ * the related AIMessage with `relatedJobId = job.id` afterward.
+ *
+ * Note: this function does NOT create the Job row. The worker (or in
+ * Phase 1's legacy sync path, the caller) is responsible for that — see
+ * `apps/web/lib/queue.ts#enqueueJob` and
+ * `apps/web/lib/ai/run-job.ts#runAIEditJob`. Splitting it out lets the
+ * Job survive across the Claude call and shows up in the queue panel
+ * the moment the user hits send.
  */
 export async function buildProposal(input: BuildProposalInput): Promise<BuildProposalResult> {
-  const { deck, user, response, conversationId, triggeringMessageId, requestId } = input;
+  const { job, deck, user, response, conversationId, triggeringMessageId, requestId } = input;
 
   if (!response.changes || response.changes.length === 0) {
     throw new ValidationError('Proposal has no changes', 'proposal_no_changes');
@@ -108,30 +145,25 @@ export async function buildProposal(input: BuildProposalInput): Promise<BuildPro
   if (!deck.headCommitSha) {
     throw new NotFoundError('Deck has no committed content', 'deck_no_head');
   }
+  if (job.kind !== 'AI_EDIT') {
+    throw new ValidationError('Job is not an AI edit', 'job_wrong_kind');
+  }
 
-  // 1. Create the Job in RUNNING — git work happens inline, no queue (Phase 1).
-  const jobInput: AIEditJobInput = {
+  const branchName = branchNameForJob(job.id);
+
+  // Merge the changes/explanation into the existing input JSON without
+  // dropping fields set at enqueue (text, scope, bullJobId, etc.).
+  const existingInput = asJobInput(job.input);
+  const mergedInput: AIEditJobInput = {
+    ...existingInput,
     conversationId,
     triggeringMessageId,
     changes: response.changes,
     explanation: response.explanation,
   };
-  const job = await prisma.job.create({
-    data: {
-      deckId: deck.id,
-      kind: 'AI_EDIT',
-      status: 'RUNNING',
-      createdById: user.id,
-      label: shortSummary(response.explanation),
-      input: jobInput as unknown as Prisma.InputJsonValue,
-      startedAt: new Date(),
-    },
-  });
-
-  const branchName = branchNameForJob(job.id);
 
   try {
-    // 2-4. Branch, write files, commit on the working branch.
+    // 1. Branch, write files, commit on the working branch.
     const { commitSha } = await commitProposalOnBranch({
       absPath: deck.repoPath,
       branchName,
@@ -141,7 +173,7 @@ export async function buildProposal(input: BuildProposalInput): Promise<BuildPro
       author: { name: user.name, email: user.email },
     });
 
-    // 5. Prime the bundle cache for the new commit so the diff preview
+    // 2. Prime the bundle cache for the new commit so the diff preview
     //    iframe renders without a build wait.
     try {
       await getBundleForDeck(deck, commitSha);
@@ -161,12 +193,14 @@ export async function buildProposal(input: BuildProposalInput): Promise<BuildPro
       );
     }
 
-    // 6. Flip to AWAITING_REVIEW.
+    // 3. Flip to AWAITING_REVIEW.
     const updated = await prisma.job.update({
       where: { id: job.id },
       data: {
         status: 'AWAITING_REVIEW',
         workingBranch: branchName,
+        label: shortSummary(response.explanation),
+        input: mergedInput as unknown as Prisma.InputJsonValue,
         output: {
           proposedCommitSha: commitSha,
           baseCommitSha: deck.headCommitSha,

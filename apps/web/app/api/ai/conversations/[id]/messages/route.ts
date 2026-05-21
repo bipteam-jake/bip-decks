@@ -1,10 +1,12 @@
-// POST /api/ai/conversations/[id]/messages — post a user message; the
-// server runs one chat-depth turn (context assembly + Claude + parse +
-// persist) and returns the persisted user + assistant rows.
+// POST /api/ai/conversations/[id]/messages — post a user message and
+// enqueue an AI_EDIT job. Returns immediately with the persisted user
+// message and the QUEUED job; the assistant message + proposal are
+// produced asynchronously by the worker and the UI picks them up by
+// polling GET /api/ai/conversations/[id].
 //
-// Per docs/bip-deck-platform-ai-editor.md §10, failures (timeout, bad JSON,
-// rule violation) are surfaced as an assistant message with kind
-// 'assistant_error' rather than an HTTP error — the chat stays continuous.
+// Per docs/bip-deck-platform-ai-editor.md §10, async failures (timeout,
+// bad JSON, rule violation) become an assistant_error message + a FAILED
+// job rather than an HTTP error — the chat stays continuous.
 
 import { NextResponse, type NextRequest } from 'next/server';
 import { randomUUID } from 'node:crypto';

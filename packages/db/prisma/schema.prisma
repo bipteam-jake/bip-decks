@@ -281,9 +281,19 @@ model Job {
 }
 
 enum JobKind {
+  // The only kind shipped in Phase 1.
   AI_EDIT
-  // OUTLINE_GENERATION, BRAND_EXTRACTION added in Phase 2
-  // TRIAGE_SLIDE, TRIAGE_ROLLUP, AGENTIC_EDIT, PDF_EXPORT added in Phase 3
+
+  // Phase 3 — stub handlers registered in chunk 1; real implementations
+  // arrive in later chunks of phase 3.
+  AGENTIC_EDIT
+  TRIAGE_SLIDE
+  TRIAGE_ROLLUP
+  MINI_TRIAGE
+  PDF_EXPORT
+  GENERATE_PATTERN_THUMBNAIL
+  PDF_EXTRACT
+  IMAGE_PROCESS
 }
 
 enum JobStatus {

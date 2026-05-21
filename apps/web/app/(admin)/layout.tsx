@@ -9,6 +9,7 @@ import { redirect } from 'next/navigation';
 
 import { Header } from '@/components/app-shell/header';
 import { MainContentWrapper } from '@/components/main-content-wrapper';
+import { QueuePanel } from '@/components/app-shell/queue-panel';
 import { Sidebar } from '@/components/app-shell/sidebar';
 import { getSessionContext } from '@/lib/auth/middleware';
 
@@ -25,6 +26,7 @@ export default async function AdminLayout({ children }: { children: React.ReactN
         <Header />
         <MainContentWrapper>{children}</MainContentWrapper>
       </div>
+      <QueuePanel />
     </div>
   );
 }

@@ -226,6 +226,89 @@ export function DeckEditor(props: DeckEditorProps) {
   }, [heartbeat, props.deck.id]);
 
   // -------------------------------------------------------------------------
+  // Async job polling (Phase 3 chunk 1). Whenever any job in the local
+  // map is QUEUED or RUNNING, poll the conversation endpoint every 2s.
+  // The worker writes the assistant message + job status updates; we
+  // pick them up here and merge into local state. When the active set
+  // becomes empty the effect tears the interval down on the next tick.
+  //
+  // Polling (rather than SSE) is deliberate for Phase 3 chunk 1 — it's
+  // dead simple, survives proxies/load balancers, and a 2s cadence is
+  // imperceptible against multi-second model latency.
+  // -------------------------------------------------------------------------
+
+  const hasActiveJob = useMemo(
+    () => Object.values(jobs).some((j) => j.status === 'QUEUED' || j.status === 'RUNNING'),
+    [jobs],
+  );
+
+  useEffect(() => {
+    if (!conversation || !hasActiveJob) return;
+    let canceled = false;
+    const tick = async () => {
+      try {
+        const res = await fetch(`/api/ai/conversations/${conversation.id}`, {
+          credentials: 'same-origin',
+        });
+        if (!res.ok) return;
+        const body = (await res.json()) as {
+          conversation: AIConversation;
+          messages: AIMessage[];
+          // GET returns a Record (jobId -> Job), keyed for fast lookup by
+          // message.relatedJobId. Don't shape this as `Job[]` — iterating
+          // an object with for..of throws and the polling silently dies.
+          jobs: Record<string, Job>;
+        };
+        if (canceled) return;
+        // Replace from the server. The server is source of truth for the
+        // conversation, so we don't need to reconcile by id — last-writer
+        // is correct here. We rely on React's setState bailout-by-reference
+        // to avoid rerenders when nothing changed (we always send a new
+        // array reference though, so this is just a perf note).
+        setMessages(body.messages);
+        setJobs(body.jobs);
+        // If an assistant message arrived for our pending turn, clear the
+        // optimistic thinking bubble. The user-side check: the latest
+        // message is from ASSISTANT and lives AFTER the most recent USER
+        // message. We use message count as a simple proxy.
+        const lastMsg = body.messages[body.messages.length - 1];
+        if (lastMsg && lastMsg.role === 'ASSISTANT') {
+          setPendingText(null);
+          setPendingStartedAt(null);
+        }
+        // Surface a toast when a freshly-produced job goes to
+        // AWAITING_REVIEW (proposal landed). One toast per job — we key
+        // off the existing `pending` derive so we don't double-toast on
+        // every poll.
+        for (const j of Object.values(body.jobs)) {
+          if (j.status === 'AWAITING_REVIEW' && jobs[j.id]?.status !== 'AWAITING_REVIEW') {
+            toast.success('Proposal ready', {
+              description: 'Review the diff and Accept or Reject.',
+            });
+          }
+        }
+      } catch (err) {
+        // Don't silently swallow — log so dev console surfaces a real bug
+        // (e.g. type-mismatched response) instead of just spinning forever.
+        // eslint-disable-next-line no-console
+        console.warn('[ai-poll] tick failed', err);
+      }
+    };
+    // Kick once immediately so the user sees state change on the same
+    // animation frame as the job transition, then settle into 2s cadence.
+    void tick();
+    const intervalId = window.setInterval(() => void tick(), 2000);
+    return () => {
+      canceled = true;
+      window.clearInterval(intervalId);
+    };
+    // We intentionally depend on `hasActiveJob` (boolean) rather than the
+    // full `jobs` object so we don't restart the interval on every status
+    // tick. `jobs` is captured in the toast-comparison via closure; reads
+    // are slightly stale but only used to gate the AWAITING_REVIEW toast.
+  }, [conversation, hasActiveJob, jobs]);
+
+  // -------------------------------------------------------------------------
   // Conversation actions
   // -------------------------------------------------------------------------
 
@@ -277,6 +360,10 @@ export function DeckEditor(props: DeckEditorProps) {
         });
         if (res.status === 409) {
           const body = await res.json().catch(() => null);
+          // Abandon the optimistic pending bubble on any 409 — the turn
+          // didn't reach the worker.
+          setPendingText(null);
+          setPendingStartedAt(null);
           if (body?.error?.code === 'pending_proposal') {
             // Restore the input so the user can confirm the supersede dialog.
             setInput(trimmed);
@@ -305,15 +392,19 @@ export function DeckEditor(props: DeckEditorProps) {
           const msg = body?.error?.message ?? `Request failed (${res.status})`;
           setError(msg);
           toast.error(msg);
+          setPendingText(null);
+          setPendingStartedAt(null);
           return;
         }
         const result = (await res.json()) as {
           userMessage: AIMessage;
-          assistantMessage: AIMessage;
-          job: Job | null;
+          // Phase 3 (chunk 1): the assistant message is no longer in the
+          // POST response. The worker writes it asynchronously and the
+          // polling effect below picks it up via GET /api/ai/conversations.
+          job: Job;
           supersededJobIds: string[];
         };
-        setMessages((prev) => [...prev, result.userMessage, result.assistantMessage]);
+        setMessages((prev) => [...prev, result.userMessage]);
         setJobs((prev) => {
           const next = { ...prev };
           // Mark superseded jobs as canceled locally so the pending-derive
@@ -322,13 +413,12 @@ export function DeckEditor(props: DeckEditorProps) {
             const j = next[id];
             if (j) next[id] = { ...j, status: 'CANCELED' } as Job;
           }
-          if (result.job) next[result.job.id] = result.job;
+          next[result.job.id] = result.job;
           return next;
         });
         setConfirmSupersede(false);
-        if (result.job && result.job.status === 'AWAITING_REVIEW') {
-          toast.success('Proposal ready', { description: 'Review the diff and Accept or Reject.' });
-        }
+        // Note: no proposal toast here — the job is QUEUED. The polling
+        // effect surfaces it as a toast once it flips to AWAITING_REVIEW.
       } catch (err) {
         if ((err as Error).name === 'AbortError') {
           // Surface the canceled turn as an inline error bubble so the user
@@ -360,16 +450,23 @@ export function DeckEditor(props: DeckEditorProps) {
             } as unknown as AIMessage,
           ]);
           setInput(trimmed);
+          // Clear the optimistic pending bubble — we're abandoning the turn.
+          setPendingText(null);
+          setPendingStartedAt(null);
           return;
         }
         const msg = (err as Error).message;
         setError(msg);
         toast.error(msg);
-      } finally {
-        setSending(false);
         setPendingText(null);
         setPendingStartedAt(null);
+      } finally {
+        setSending(false);
         sendAbortRef.current = null;
+        // NOTE: pendingText/pendingStartedAt are intentionally NOT cleared
+        // here. On a successful enqueue the worker runs asynchronously
+        // and the polling effect (below) clears them when the assistant
+        // message arrives. Error/abort paths clear them inline above.
       }
     },
     [ensureConversation, scope, currentSlideId],

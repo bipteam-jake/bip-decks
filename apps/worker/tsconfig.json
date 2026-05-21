@@ -4,9 +4,13 @@
     "module": "ESNext",
     "moduleResolution": "Bundler",
     "outDir": "./dist",
-    "rootDir": "./src",
-    "noEmit": false
+    "rootDir": "../..",
+    "noEmit": false,
+    "baseUrl": ".",
+    "paths": {
+      "@/*": ["../../apps/web/*"]
+    }
   },
-  "include": ["src/**/*.ts"],
+  "include": ["src/**/*.ts", "../../apps/web/lib/**/*.ts"],
   "exclude": ["node_modules", "dist"]
 }
